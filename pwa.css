@@ -1,0 +1,40 @@
+/* ===== PWA & Mobile ===== */
+html{-webkit-text-size-adjust:100%}
+body{overscroll-behavior-y:none}
+#pwaBanner{position:fixed;left:0;right:0;top:0;z-index:300;background:#b45309;color:#fff;text-align:center;font-size:12.5px;padding:calc(6px + env(safe-area-inset-top)) 12px 6px;display:none}
+#pwaBanner.show{display:block}
+#pwaInstall{position:fixed;right:14px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:250;display:none;box-shadow:0 6px 20px rgba(76,29,149,.35)}
+#pwaInstall.show{display:inline-flex}
+#bottomNav{display:none}
+@media (max-width:900px){
+  #topbar{padding-top:env(safe-area-inset-top);height:calc(56px + env(safe-area-inset-top));padding-left:12px;padding-right:12px;gap:8px}
+  #topbar h2{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42vw}
+  .topbar-right{gap:6px}
+  .topbar-right .btn-sm{padding:7px 9px}
+  #sidebar{padding-top:env(safe-area-inset-top);width:min(82vw,300px)}
+  #pageContainer{padding-bottom:calc(84px + env(safe-area-inset-bottom))!important}
+  .nav-item{min-height:44px}
+  .btn{min-height:40px}
+  .btn-sm{min-height:36px}
+  #bottomNav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:90;background:#fff;border-top:1px solid var(--border);
+    padding:4px 4px calc(4px + env(safe-area-inset-bottom));box-shadow:0 -4px 16px rgba(0,0,0,.06)}
+  #bottomNav.hidden{display:none}
+  #bottomNav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:6px 2px;font-size:10.5px;
+    color:var(--muted);border-radius:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;min-height:50px;text-decoration:none}
+  #bottomNav a span:first-child{font-size:19px;line-height:1}
+  #bottomNav a.active{color:var(--primary);font-weight:700;background:var(--primary-light)}
+  #pwaInstall{bottom:calc(76px + env(safe-area-inset-bottom))}
+  #toastRoot{bottom:calc(76px + env(safe-area-inset-bottom))!important}
+}
+@media (max-width:600px){
+  /* input 16px: mencegah iOS zoom otomatis saat fokus */
+  input,select,textarea,.form-control,.gx .form-control{font-size:16px!important}
+  /* modal layar penuh */
+  .modal-backdrop{padding:0!important;align-items:stretch!important}
+  .modal,.modal.wide,.modal.xwide{max-width:none!important;min-height:100%;border-radius:0!important;
+    padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+  .grid-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .topbar-right .btn-outline:not(#btnRefreshData){display:none}
+  .user-chip{display:none}
+}
+@media (display-mode:standalone){ body{user-select:none;-webkit-user-select:none} input,textarea,[contenteditable],td,.form-control{user-select:text;-webkit-user-select:text} }
