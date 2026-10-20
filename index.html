@@ -1670,6 +1670,7 @@ const MODULE_CONFIG = {
       { key: 'nama', label: 'Nama' },
       { key: 'whatsapp', label: 'WhatsApp' },
       { key: 'kota', label: 'Kota' },
+      { key: 'tanggal_lahir', label: 'Tgl Lahir' },
       { key: 'jenis_pelanggan', label: 'Jenis', type: 'badge' },
       { key: 'sumber', label: 'Sumber' },
       { key: 'total_transaksi', label: 'Transaksi', type: 'number' },
@@ -1682,6 +1683,7 @@ const MODULE_CONFIG = {
       { key: 'whatsapp', label: 'WhatsApp', type: 'tel', required: true },
       { key: 'email', label: 'Email', type: 'email' },
       { key: 'kota', label: 'Kota', defaultValue: 'Samarinda' },
+      { key: 'tanggal_lahir', label: 'Tanggal Lahir', type: 'date', hint: 'Dipakai untuk promo ulang tahun & follow-up (opsional)' },
       { key: 'jenis_pelanggan', label: 'Jenis Pelanggan', type: 'select', options: optFn('jenis_pelanggan'), required: true },
       { key: 'sumber', label: 'Sumber', type: 'select', options: optFn('sumber'), required: true },
       { key: 'tanggal_kunjungan_terakhir', label: 'Kunjungan Terakhir', type: 'date' },
@@ -1691,7 +1693,7 @@ const MODULE_CONFIG = {
       { key: 'PIC', label: 'PIC', type: 'select', dynamic: 'team' },
       { key: 'minat', label: 'Minat / Catatan', type: 'textarea', full: true }
     ],
-    filters: [{ key: 'jenis_pelanggan', label: 'Jenis', options: optFn('jenis_pelanggan') }, { key: 'status', label: 'Status', options: ['AKTIF', 'PASIF', 'VIP'] }, { key: 'sumber', label: 'Sumber', options: optFn('sumber') }]
+    filters: [{ key: 'jenis_pelanggan', label: 'Jenis', options: optFn('jenis_pelanggan') }, { key: 'status', label: 'Status', options: ['AKTIF', 'PASIF', 'VIP'] }, { key: 'sumber', label: 'Sumber', options: optFn('sumber') }, { key: 'bulan_lahir', label: 'Bulan Lahir', options: function() { return CRM_MONTHS.slice(); } }]
   },
   leads: {
     title: 'Leads', icon: '🧲', desc: 'Calon pelanggan dan pipeline penjualan — profil CRM otomatis dari nomor WhatsApp, jadwal Follow-up otomatis dari tanggal follow up',
@@ -2122,7 +2124,14 @@ async function refreshLookups() {
 
 async function loadModuleData(moduleKey) {
   const res = await api('apiGetRecords', App.token, moduleKey);
-  return res.data || [];
+  const data = res.data || [];
+  if (moduleKey === 'customers') {
+    data.forEach(function(r) {
+      const m = crmBirthParts_(r.tanggal_lahir);
+      r.bulan_lahir = m ? CRM_MONTHS[m.m - 1] : '';
+    });
+  }
+  return data;
 }
 
 /* ==================== KONTEN: IMPORT DATA (XLSX) + TEMPLATE ====================
@@ -2676,6 +2685,7 @@ const CRM_IMPORT_COLS = [
   { key: 'nama', header: 'Nama', req: true, width: 28, hint: 'Nama lengkap pelanggan', example: 'Budi Santoso' },
   { key: 'whatsapp', header: 'WhatsApp', req: true, width: 18, kind: 'phone', hint: 'Nomor WhatsApp, contoh 081234567890 atau 6281234567890 (otomatis dirapikan ke 08xx)', example: '081234567890' },
   { key: 'email', header: 'Email', width: 28, hint: 'Alamat email (opsional)', example: 'budi@email.com' },
+  { key: 'tanggal_lahir', header: 'Tanggal Lahir', width: 16, kind: 'date', hint: 'Format YYYY-MM-DD, contoh 1990-05-17. Untuk promo ulang tahun (opsional)', example: '1990-05-17' },
   { key: 'kota', header: 'Kota', width: 18, hint: 'Kosong = Samarinda', example: 'Samarinda' },
   { key: 'jenis_pelanggan', header: 'Jenis Pelanggan', req: true, width: 20, list: 'jenis_pelanggan', hint: 'Pilih dari daftar', example: 'Keluarga' },
   { key: 'sumber', header: 'Sumber', req: true, width: 18, list: 'sumber', hint: 'Pilih dari daftar', example: 'Instagram' },
@@ -2690,6 +2700,7 @@ const CRM_HEADER_ALIASES = {
   nama: ['nama', 'nama pelanggan', 'name'],
   whatsapp: ['whatsapp', 'wa', 'no wa', 'no. wa', 'no whatsapp', 'nomor whatsapp', 'no hp', 'no. hp', 'hp', 'telepon'],
   email: ['email', 'e-mail'],
+  tanggal_lahir: ['tanggal lahir', 'tgl lahir', 'tanggal_lahir', 'birthday', 'ulang tahun', 'lahir'],
   kota: ['kota', 'city'],
   jenis_pelanggan: ['jenis pelanggan', 'jenis', 'jenis_pelanggan'],
   sumber: ['sumber', 'source'],
@@ -2786,9 +2797,9 @@ function buildCrmTemplate_(ExcelJS, lists) {
   CRM_IMPORT_COLS.forEach(function(c, i) {
     const rng = crmColL_(i) + FIRST + ':' + crmColL_(i) + LAST;
     if (c.kind === 'date') {
-      ws.dataValidations.add(rng, { type: 'date', operator: 'greaterThan', formulae: [new Date(Date.UTC(2000, 0, 1))], allowBlank: true,
-        showInputMessage: true, promptTitle: 'Tanggal', prompt: 'Format YYYY-MM-DD, contoh 2026-10-08',
-        showErrorMessage: true, errorStyle: 'stop', errorTitle: 'Tanggal tidak valid', error: 'Isi dengan tanggal yang benar, contoh 2026-10-08.' });
+      ws.dataValidations.add(rng, { type: 'date', operator: 'greaterThan', formulae: [new Date(Date.UTC(1900, 0, 1))], allowBlank: true,
+        showInputMessage: true, promptTitle: c.header, prompt: 'Format YYYY-MM-DD, contoh ' + c.example,
+        showErrorMessage: true, errorStyle: 'stop', errorTitle: 'Tanggal tidak valid', error: 'Isi dengan tanggal yang benar, contoh ' + c.example + '.' });
     } else if (c.kind === 'int') {
       ws.dataValidations.add(rng, { type: 'whole', operator: 'greaterThanOrEqual', formulae: [0], allowBlank: true,
         showErrorMessage: true, errorStyle: 'stop', errorTitle: 'Angka tidak valid', error: 'Isi dengan angka bulat 0 atau lebih.' });
@@ -2826,7 +2837,7 @@ function buildCrmTemplate_(ExcelJS, lists) {
     'Kolom bertanda * (Nama, WhatsApp, Jenis Pelanggan, Sumber) wajib diisi. Kolom lain boleh dikosongkan.',
     'Jenis Pelanggan, Sumber, Status, dan PIC dipilih dari dropdown. Nilai di luar daftar akan ditolak saat import.',
     'Nomor WhatsApp boleh ditulis 0812..., 62812..., atau +62 812...; sistem merapikannya ke format 08xx. Nomor yang sama dengan pelanggan yang sudah ada dianggap duplikat dan dilewati.',
-    'Kunjungan Terakhir ditulis YYYY-MM-DD (contoh 2026-10-08). Total Transaksi & Total Nilai berupa angka; dikosongkan = 0. Status dikosongkan = AKTIF, Kota dikosongkan = Samarinda.',
+    'Tanggal Lahir dan Kunjungan Terakhir ditulis YYYY-MM-DD (contoh 1990-05-17) atau format tanggal Excel biasa. Tanggal Lahir dipakai untuk widget & segmen ulang tahun. Total Transaksi & Total Nilai berupa angka; dikosongkan = 0. Status dikosongkan = AKTIF, Kota dikosongkan = Samarinda.',
     'Simpan file sebagai .xlsx, lalu buka menu CRM Pelanggan → ⬆ Import Data → pilih file → periksa pratinjau → klik Import.',
     'Maksimal ' + CRM_IMPORT_MAX_ROWS.toLocaleString('id-ID') + ' baris per file. File hasil ⬇ Export Excel juga bisa diimport kembali (baris yang sudah ada otomatis dilewati).'
   ].forEach(function(txt, i) {
@@ -2942,6 +2953,14 @@ function validateCrmRows_(parsed, lists, existingKeys) {
     else {
       const s = canon(CRM_STATUS_OPTIONS, stRaw);
       if (s === null) { errors.push('Status "' + stRaw + '" tidak valid (AKTIF/PASIF/VIP)'); rec.status = stRaw; } else rec.status = s;
+    }
+    const lhV = raw.tanggal_lahir;
+    const lhEmpty = lhV === '' || lhV === null || lhV === undefined || (typeof lhV === 'string' && lhV.trim() === '');
+    if (lhEmpty) rec.tanggal_lahir = '';
+    else {
+      const lh = crmToBirthStr_(raw.tanggal_lahir);
+      if (!lh) errors.push('Tanggal Lahir tidak valid (YYYY-MM-DD, tahun 1900 s/d hari ini)');
+      rec.tanggal_lahir = lh;
     }
     const tglRaw = xlToText_(raw.tanggal_kunjungan_terakhir);
     if (!tglRaw) rec.tanggal_kunjungan_terakhir = '';
@@ -3092,6 +3111,146 @@ function openCrmImport() {
   }
 }
 
+/* ---------- Tanggal lahir & widget kontrol CRM ---------- */
+const CRM_MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const CRM_BDAY_MSG = 'Halo Kak {nama} 🎉\n\nSelamat ulang tahun! Semoga selalu sehat dan bahagia. Sebagai hadiah, Wonderland Samarinda punya promo spesial ulang tahun untuk Kakak. Boleh kami infokan detailnya?';
+
+function crmBirthParts_(v) {
+  const m = String(v === null || v === undefined ? '' : v).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const y = +m[1], mo = +m[2], d = +m[3];
+  if (y < 1900 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return { y: y, m: mo, d: d };
+}
+// Nilai sel Excel/teks -> 'YYYY-MM-DD' tanggal lahir yang valid (1900 s/d hari ini), '' bila tidak valid
+function crmToBirthStr_(v) {
+  let y, m, d;
+  if (xlIsDate_(v)) { if (isNaN(v.getTime())) return ''; y = v.getUTCFullYear(); m = v.getUTCMonth() + 1; d = v.getUTCDate(); }
+  else if (typeof v === 'number') {
+    if (v < 366 || v > 80000) return '';
+    const dt = new Date(Date.UTC(1899, 11, 30) + Math.floor(v) * 86400000);
+    y = dt.getUTCFullYear(); m = dt.getUTCMonth() + 1; d = dt.getUTCDate();
+  } else {
+    const s = String(v).trim();
+    let k = s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?:[ T].*)?$/);
+    if (k) { y = +k[1]; m = +k[2]; d = +k[3]; }
+    else {
+      k = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/);
+      if (!k) return '';
+      d = +k[1]; m = +k[2]; y = +k[3];
+    }
+  }
+  if (y < 1900 || m < 1 || m > 12 || d < 1 || d > 31) return '';
+  const chk = new Date(Date.UTC(y, m - 1, d));
+  if (chk.getUTCFullYear() !== y || chk.getUTCMonth() !== m - 1 || chk.getUTCDate() !== d) return '';
+  const out = y + '-' + xlPad_(m) + '-' + xlPad_(d);
+  const n = new Date();
+  if (out > n.getFullYear() + '-' + xlPad_(n.getMonth() + 1) + '-' + xlPad_(n.getDate())) return '';
+  return out;
+}
+
+function crmBdayRows_(month) {
+  const data = App.grid ? App.grid.getData() : [];
+  const now = new Date();
+  const t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return data.map(function(r) {
+    const b = crmBirthParts_(r.tanggal_lahir);
+    if (!b || b.m !== month) return null;
+    let occ = new Date(t0.getFullYear(), b.m - 1, b.d);
+    if (occ < t0) occ = new Date(t0.getFullYear() + 1, b.m - 1, b.d);
+    return { r: r, b: b, diff: Math.round((occ - t0) / 86400000) };
+  }).filter(Boolean).sort(function(a, c) {
+    return a.b.d - c.b.d || String(a.r.nama).localeCompare(String(c.r.nama));
+  });
+}
+
+function renderCrmWidgets() {
+  const host = document.getElementById('summaryHost');
+  if (!host || App.currentRoute !== 'customers' || !App.grid) return;
+  const data = App.grid.getData();
+  const now = new Date();
+  const curM = now.getMonth() + 1, curY = now.getFullYear();
+  const t0 = new Date(curY, now.getMonth(), now.getDate());
+  if (!App.crmBdayMonth) App.crmBdayMonth = curM;
+  const ym = curY + '-' + xlPad_(curM);
+
+  let aktif = 0, vip = 0, baru = 0, tanpaLahir = 0, dormant = 0, bdayThisMonth = 0, bdayToday = 0, bday7 = 0;
+  data.forEach(function(r) {
+    const st = String(r.status || '').toUpperCase();
+    if (st === 'AKTIF' || st === 'VIP') aktif++;
+    if (st === 'VIP') vip++;
+    if (String(r.created_at || '').substring(0, 7) === ym) baru++;
+    const vis = crmToDate_(r.tanggal_kunjungan_terakhir);
+    if (vis && (t0 - new Date(vis.getUTCFullYear(), vis.getUTCMonth(), vis.getUTCDate())) / 86400000 > 90) dormant++;
+    const b = crmBirthParts_(r.tanggal_lahir);
+    if (!b) { tanpaLahir++; return; }
+    let occ = new Date(curY, b.m - 1, b.d);
+    if (occ < t0) occ = new Date(curY + 1, b.m - 1, b.d);
+    const diff = Math.round((occ - t0) / 86400000);
+    if (b.m === curM) bdayThisMonth++;
+    if (diff === 0) bdayToday++;
+    if (diff >= 0 && diff <= 7) bday7++;
+  });
+  const total = data.length;
+  const pct = total ? Math.round((total - tanpaLahir) / total * 100) : 0;
+
+  const cards = '<div class="cards-row grid-6">' +
+    statCard('Total Pelanggan', fmtNum(total), fmtNum(aktif) + ' aktif / VIP', '🤝', 'ico-violet') +
+    statCard('Ulang Tahun ' + CRM_MONTHS[curM - 1], fmtNum(bdayThisMonth), 'Hari ini ' + fmtNum(bdayToday) + ' · 7 hari ke depan ' + fmtNum(bday7), '🎂', 'ico-rose') +
+    statCard('Tanggal Lahir Terisi', fmtNum(pct) + '%', fmtNum(tanpaLahir) + ' pelanggan belum diisi', '📝', pct >= 60 ? 'ico-green' : 'ico-amber') +
+    statCard('Pelanggan Baru Bulan Ini', fmtNum(baru), CRM_MONTHS[curM - 1] + ' ' + curY, '✨', 'ico-green') +
+    statCard('Pelanggan VIP', fmtNum(vip), total ? Math.round(vip / total * 1000) / 10 + '% dari total' : '', '👑', 'ico-amber') +
+    statCard('Lama Tidak Berkunjung', fmtNum(dormant), 'Kunjungan terakhir > 90 hari', '😴', 'ico-blue') +
+  '</div>';
+
+  const sel = App.crmBdayMonth;
+  const list = crmBdayRows_(sel);
+  const LIMIT = 10;
+  const shown = App.crmBdayAll ? list : list.slice(0, LIMIT);
+  const monthOpts = CRM_MONTHS.map(function(n, i) { return '<option value="' + (i + 1) + '"' + (i + 1 === sel ? ' selected' : '') + '>' + n + '</option>'; }).join('');
+  let body;
+  if (!list.length) {
+    body = '<div class="grid-empty" style="padding:16px">Belum ada pelanggan yang berulang tahun di bulan ' + CRM_MONTHS[sel - 1] + '.' +
+      (tanpaLahir ? '<br><small>' + fmtNum(tanpaLahir) + ' pelanggan belum memiliki Tanggal Lahir — lengkapi lewat Edit atau Import Data.</small>' : '') + '</div>';
+  } else {
+    body = '<div class="grid-table-wrap"><table class="table-plain"><thead><tr><th>Tanggal</th><th>Nama</th><th>Usia</th><th>WhatsApp</th><th>Status</th><th>PIC</th><th style="width:110px">Aksi</th></tr></thead><tbody>';
+    shown.forEach(function(x) {
+      const r = x.r, isThis = sel === curM;
+      let tag = '';
+      if (isThis && x.diff === 0) tag = ' <span class="badge b-red">HARI INI</span>';
+      else if (isThis && x.diff > 0 && x.diff <= 7) tag = ' <span class="badge b-amber">H-' + x.diff + '</span>';
+      const past = isThis && x.b.d < now.getDate();
+      body += '<tr' + (past ? ' style="opacity:.55"' : '') + '><td style="white-space:nowrap"><b>' + x.b.d + ' ' + CRM_MONTHS[x.b.m - 1].substring(0, 3) + '</b>' + tag + '</td>' +
+        '<td>' + esc(r.nama || '—') + '</td><td>' + (x.b.y ? 'ke-' + (curY - x.b.y) : '—') + '</td><td>' + esc(r.whatsapp || '—') + '</td>' +
+        '<td>' + (r.status ? '<span class="badge ' + c360badge(r.status) + '">' + esc(r.status) + '</span>' : '—') + '</td><td>' + esc(r.PIC || '—') + '</td>' +
+        '<td style="white-space:nowrap"><button class="btn btn-outline btn-sm btn-icon" title="Kirim ucapan via WhatsApp" onclick="crmBdayWa(\'' + esc(r.customer_id) + '\')">💬</button> ' +
+        '<button class="btn btn-outline btn-sm btn-icon" title="Customer 360" onclick="openCustomer360(\'' + esc(r.customer_id) + '\')">👁</button></td></tr>';
+    });
+    body += '</tbody></table></div>';
+    if (list.length > LIMIT) body += '<div style="margin-top:8px"><button class="btn btn-outline btn-sm" onclick="App.crmBdayAll=!App.crmBdayAll;renderCrmWidgets()">' +
+      (App.crmBdayAll ? 'Tampilkan lebih sedikit' : 'Tampilkan semua (' + fmtNum(list.length) + ')') + '</button></div>';
+  }
+  host.innerHTML = cards +
+    '<div class="card card-pad" style="margin-top:14px"><div class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+      '<span class="dot"></span>🎂 Ulang Tahun Pelanggan — ' + fmtNum(list.length) + ' orang' +
+      '<span style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+        '<select class="form-control" style="width:auto;padding:5px 8px" onchange="App.crmBdayMonth=Number(this.value);App.crmBdayAll=false;renderCrmWidgets()">' + monthOpts + '</select>' +
+        (list.length ? '<button class="btn btn-outline btn-sm" onclick="crmBdayExport()">⬇ Export Excel</button>' : '') +
+        '<button class="btn btn-outline btn-sm" onclick="navigate(\'outreach\')" title="Buka Customer Outreach, pilih segmen Ulang Tahun Bulan Ini">📨 Outreach</button>' +
+      '</span></div>' + body + '</div>' +
+    '<div class="section-title">Data Pelanggan</div>';
+}
+function crmBdayWa(id) {
+  const r = (App.grid ? App.grid.getData() : []).filter(function(x) { return String(x.customer_id) === String(id); })[0];
+  if (!r || !crmPhoneLocal_(r.whatsapp)) { toast('Nomor WhatsApp pelanggan belum ada.', 'error'); return; }
+  const msg = CRM_BDAY_MSG.replace(/\{nama\}/g, String(r.nama || '').trim());
+  window.open(orWaUrl(r.whatsapp, msg), '_blank', 'noopener');
+}
+function crmBdayExport() {
+  const rows = crmBdayRows_(App.crmBdayMonth || (new Date().getMonth() + 1)).map(function(x) { return x.r; });
+  exportCrmExcel(null, rows, 'Pelanggan berulang tahun bulan ' + CRM_MONTHS[(App.crmBdayMonth || 1) - 1]);
+}
+
 /* ---------- Export Excel (.xlsx) ---------- */
 function crmToNum_(v) {
   if (v === null || v === undefined || v === '') return 0;
@@ -3108,6 +3267,7 @@ const CRM_EXPORT_COLS = [
   { key: 'nama', header: 'Nama', width: 28 },
   { key: 'whatsapp', header: 'WhatsApp', width: 17, kind: 'phone' },
   { key: 'email', header: 'Email', width: 28 },
+  { key: 'tanggal_lahir', header: 'Tanggal Lahir', width: 15, kind: 'date', align: 'center' },
   { key: 'kota', header: 'Kota', width: 15 },
   { key: 'jenis_pelanggan', header: 'Jenis Pelanggan', width: 18, align: 'center' },
   { key: 'sumber', header: 'Sumber', width: 16 },
@@ -3176,20 +3336,22 @@ function buildCrmExport_(ExcelJS, rows, meta) {
 
   // Baris total (SUBTOTAL ikut berubah bila Anda memfilter di Excel)
   const tr = LASTROW + 1;
-  ws.mergeCells(tr, 1, tr, 10);
+  const iTx = CRM_EXPORT_COLS.map(function(c) { return c.key; }).indexOf('total_transaksi') + 1;
+  const iNilai = CRM_EXPORT_COLS.map(function(c) { return c.key; }).indexOf('total_nilai_transaksi') + 1;
+  ws.mergeCells(tr, 1, tr, iTx - 1);
   const tl = ws.getCell(tr, 1);
   tl.value = 'TOTAL (mengikuti filter)';
   tl.font = { name: FONT, size: 11, bold: true, color: { argb: C.white } };
   tl.fill = crmFill_(C.slate); tl.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
   let sumTx = 0, sumNilai = 0;
   rows.forEach(function(r) { sumTx += crmToNum_(r.total_transaksi); sumNilai += crmToNum_(r.total_nilai_transaksi); });
-  [[11, 'K', sumTx, '#,##0'], [12, 'L', sumNilai, '"Rp" #,##0']].forEach(function(f) {
+  [[iTx, crmColL_(iTx - 1), sumTx, '#,##0'], [iNilai, crmColL_(iNilai - 1), sumNilai, '"Rp" #,##0']].forEach(function(f) {
     const c = ws.getCell(tr, f[0]);
     c.value = { formula: 'SUBTOTAL(109,' + f[1] + FIRST + ':' + f[1] + LASTROW + ')', result: f[2] };
     c.numFmt = f[3]; c.font = { name: FONT, size: 11, bold: true, color: { argb: C.white } };
     c.fill = crmFill_(C.slate); c.alignment = { vertical: 'middle', horizontal: 'right' };
   });
-  [13, 14].forEach(function(col) { ws.getCell(tr, col).fill = crmFill_(C.slate); });
+  for (let col = iNilai + 1; col <= NC; col++) ws.getCell(tr, col).fill = crmFill_(C.slate);
   ws.getRow(tr).height = 24;
 
   ws.autoFilter = { from: { row: HEAD, column: 1 }, to: { row: Math.max(LASTROW, HEAD), column: NC } };
@@ -3263,18 +3425,30 @@ function buildCrmExport_(ExcelJS, rows, meta) {
   const topN = rows.slice().sort(function(a, b) { return crmToNum_(b.total_nilai_transaksi) - crmToNum_(a.total_nilai_transaksi); }).slice(0, 10)
     .filter(function(r) { return crmToNum_(r.total_nilai_transaksi) > 0; })
     .map(function(r) { return { k: r.nama || r.customer_id, n: crmToNum_(r.total_transaksi), v: crmToNum_(r.total_nilai_transaksi) }; });
-  table(5, Math.max(e1, e2) + 1, 'Top 10 Pelanggan (Nilai Transaksi)', topN, 'Nama');
+  const e4 = table(5, Math.max(e1, e2) + 1, 'Top 10 Pelanggan (Nilai Transaksi)', topN, 'Nama');
+  const bm = {}; let noBirth = 0;
+  rows.forEach(function(r) {
+    const b = crmBirthParts_(r.tanggal_lahir);
+    if (!b) { noBirth++; return; }
+    if (!bm[b.m]) bm[b.m] = { n: 0, v: 0 };
+    bm[b.m].n++; bm[b.m].v += crmToNum_(r.total_nilai_transaksi);
+  });
+  const bdata = Object.keys(bm).map(Number).sort(function(a, b) { return a - b; }).map(function(m) { return { k: CRM_MONTHS[m - 1], n: bm[m].n, v: bm[m].v }; });
+  if (noBirth) bdata.push({ k: '(Tanggal lahir belum diisi)', n: noBirth, v: rows.filter(function(r) { return !crmBirthParts_(r.tanggal_lahir); }).reduce(function(s, r) { return s + crmToNum_(r.total_nilai_transaksi); }, 0) });
+  table(1, Math.max(e3, e4) + 1, 'Ulang Tahun per Bulan', bdata, 'Bulan Lahir');
   wr.pageSetup = { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
 
   wb.views = [{ activeTab: 0, firstSheet: 0, visibility: 'visible' }];
   return wb;
 }
 
-async function exportCrmExcel(selectedIds) {
+async function exportCrmExcel(selectedIds, rowsOverride, scopeText) {
   if (!App.grid) return;
   const all = App.grid.getData();
   let rows, scope;
-  if (selectedIds && selectedIds.length) {
+  if (rowsOverride) {
+    rows = rowsOverride; scope = scopeText || (rows.length + ' pelanggan');
+  } else if (selectedIds && selectedIds.length) {
     const set = {};
     selectedIds.forEach(function(id) { set[String(id)] = true; });
     rows = App.grid.getFiltered().filter(function(r) { return set[String(r.customer_id)]; });
@@ -3383,6 +3557,7 @@ async function renderModulePage(moduleKey) {
     const data = await loadModuleData(moduleKey);
     App.grid.reload(data);
     loadSummary(moduleKey);
+    if (moduleKey === 'customers') renderCrmWidgets();
   } catch (e) {
     App.grid.setLoading(false);
     gridHost.innerHTML = '<div class="alert error-state">⚠️ ' + esc(e.message || 'Terjadi kesalahan saat mengambil data. Silakan coba lagi.') +
@@ -3460,6 +3635,7 @@ async function reloadGrid(moduleKey) {
     const data = await loadModuleData(moduleKey);
     App.grid.reload(data);
     loadSummary(moduleKey);
+    if (moduleKey === 'customers') renderCrmWidgets();
     toast('Data diperbarui.');
   } catch (e) {
     App.grid.setLoading(false);
@@ -3964,6 +4140,7 @@ function openCustomer360(crmId) {
       ['WhatsApp', esc(c.whatsapp)],
       ['Email', esc(c.email || '—')],
       ['Kota', esc(c.kota || '—')],
+      ['Tanggal Lahir', esc(c.tanggal_lahir || '—')],
       ['Jenis Pelanggan', esc(c.jenis_pelanggan || '—')],
       ['Asal Data / Sumber', '<span class="badge b-violet">' + esc(c.sumber || '—') + '</span>'],
       ['Status', '<span class="badge ' + c360badge(c.status) + '">' + esc(c.status || '—') + '</span>'],
@@ -5701,7 +5878,8 @@ const OR_SEGMENTS = [
   { key: 'FAMILY', label: 'Family', hint: 'Jenis pelanggan Keluarga' },
   { key: 'PESERTA EVENT', label: 'Peserta Event', hint: 'Pernah menjadi peserta event' },
   { key: 'PROSPEK', label: 'Prospek (Belum Reservasi)', hint: 'Pernah menjadi Lead tetapi belum reservasi' },
-  { key: 'VIP', label: 'VIP', hint: 'Status CRM VIP' }
+  { key: 'VIP', label: 'VIP', hint: 'Status CRM VIP' },
+  { key: 'ULANG TAHUN BULAN INI', label: 'Ulang Tahun Bulan Ini', hint: 'Tanggal lahir jatuh di bulan berjalan — kirim promo ulang tahun' }
 ];
 const OR_STATUSES = ['DIHUBUNGI', 'MERESPONS', 'TERTARIK', 'TIDAK TERTARIK', 'TIDAK ADA RESPONS', 'NOMOR TIDAK AKTIF'];
 const OR_PERIODS = [{ v: 'TODAY', l: 'Hari Ini' }, { v: 'WEEK', l: 'Minggu Ini' }, { v: 'MONTH', l: 'Bulan Ini' }];
