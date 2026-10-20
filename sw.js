@@ -1,5 +1,5 @@
 /* Service worker WMC. Naikkan VERSION setiap kali file aplikasi diubah. */
-var VERSION = 'wmc-v1';
+var VERSION = 'wmc-v2';
 var SHELL = [
   './', './index.html', './public.html', './config.js', './gas-shim.js',
   './pwa.js', './pwa.css', './manifest.webmanifest',

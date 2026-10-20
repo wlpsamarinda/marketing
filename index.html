@@ -500,6 +500,7 @@ tr.or-off{opacity:.55}
       </div>
       <button class="btn btn-primary btn-full" type="submit" id="btnLogin">Masuk</button>
     </form>
+    <p class="auth-foot">Akun default: <b>admin</b> / <b>admin123</b> — wajib diganti setelah login pertama.</p>
   </div>
 </div>
 
@@ -1248,7 +1249,8 @@ function DataGrid(container, opts) {
     render: render,
     setLoading: function(v) { state.loading = v; render(); },
     reload: function(data) { state.loading = false; state.data = data || []; state.page = 1; state.selected = {}; render(); },
-    getData: function() { return state.data; }
+    getData: function() { return state.data; },
+    getFiltered: function() { return getFiltered(); }
   };
 }
 
@@ -2662,6 +2664,645 @@ function openContentImport() {
   }
 }
 
+/* ==================== CRM PELANGGAN: IMPORT DATA, TEMPLATE & EXPORT EXCEL ====================
+ * Memakai ExcelJS (loadExcelJS_) dan helper xl*_ milik import Konten. Import disimpan lewat apiImportCustomers per 200 baris.
+ * Export dibuat di browser dari data yang tampil di tabel (atau baris yang dipilih) -> file .xlsx siap pakai.
+ */
+const CRM_STATUS_OPTIONS = ['AKTIF', 'PASIF', 'VIP'];
+const CRM_IMPORT_MAX_ROWS = 2000;
+const CRM_TEMPLATE_ROWS = 1000;
+const CRM_TEMPLATE_FIRST_ROW = 5;
+const CRM_IMPORT_COLS = [
+  { key: 'nama', header: 'Nama', req: true, width: 28, hint: 'Nama lengkap pelanggan', example: 'Budi Santoso' },
+  { key: 'whatsapp', header: 'WhatsApp', req: true, width: 18, kind: 'phone', hint: 'Nomor WhatsApp, contoh 081234567890 atau 6281234567890 (otomatis dirapikan ke 08xx)', example: '081234567890' },
+  { key: 'email', header: 'Email', width: 28, hint: 'Alamat email (opsional)', example: 'budi@email.com' },
+  { key: 'kota', header: 'Kota', width: 18, hint: 'Kosong = Samarinda', example: 'Samarinda' },
+  { key: 'jenis_pelanggan', header: 'Jenis Pelanggan', req: true, width: 20, list: 'jenis_pelanggan', hint: 'Pilih dari daftar', example: 'Keluarga' },
+  { key: 'sumber', header: 'Sumber', req: true, width: 18, list: 'sumber', hint: 'Pilih dari daftar', example: 'Instagram' },
+  { key: 'tanggal_kunjungan_terakhir', header: 'Kunjungan Terakhir', width: 18, kind: 'date', hint: 'Format YYYY-MM-DD, contoh 2026-10-08 (opsional)', example: '2026-10-08' },
+  { key: 'total_transaksi', header: 'Total Transaksi', width: 15, kind: 'int', hint: 'Angka bulat ≥ 0. Kosong = 0', example: '3' },
+  { key: 'total_nilai_transaksi', header: 'Total Nilai Transaksi (Rp)', width: 22, kind: 'int', hint: 'Angka rupiah tanpa titik/koma. Kosong = 0', example: '1500000' },
+  { key: 'status', header: 'Status', width: 12, list: 'status', hint: 'AKTIF / PASIF / VIP. Kosong = AKTIF', example: 'AKTIF' },
+  { key: 'PIC', header: 'PIC', width: 22, list: 'PIC', hint: 'Pilih nama dari Data Tim (opsional)', example: 'Nama anggota tim' },
+  { key: 'minat', header: 'Minat / Catatan', width: 40, hint: 'Catatan minat pelanggan (opsional)', example: 'Tertarik paket ulang tahun' }
+];
+const CRM_HEADER_ALIASES = {
+  nama: ['nama', 'nama pelanggan', 'name'],
+  whatsapp: ['whatsapp', 'wa', 'no wa', 'no. wa', 'no whatsapp', 'nomor whatsapp', 'no hp', 'no. hp', 'hp', 'telepon'],
+  email: ['email', 'e-mail'],
+  kota: ['kota', 'city'],
+  jenis_pelanggan: ['jenis pelanggan', 'jenis', 'jenis_pelanggan'],
+  sumber: ['sumber', 'source'],
+  tanggal_kunjungan_terakhir: ['kunjungan terakhir', 'tanggal kunjungan terakhir', 'tanggal_kunjungan_terakhir'],
+  total_transaksi: ['total transaksi', 'transaksi', 'total_transaksi'],
+  total_nilai_transaksi: ['total nilai transaksi (rp)', 'total nilai transaksi', 'total nilai', 'total_nilai_transaksi'],
+  status: ['status'],
+  PIC: ['pic'],
+  minat: ['minat / catatan', 'minat', 'catatan', 'minat/catatan']
+};
+
+function crmImportLists_() {
+  return {
+    jenis_pelanggan: ((App.options && App.options.jenis_pelanggan) || []).slice(),
+    sumber: ((App.options && App.options.sumber) || []).slice(),
+    status: CRM_STATUS_OPTIONS.slice(),
+    PIC: (App.teamNames || []).map(function(t) { return t.nama; }).filter(Boolean)
+  };
+}
+// 0812xxx / 62812xxx / 812xxx -> 0812xxx ; '' bila tidak ada angka
+function crmPhoneLocal_(v) {
+  let p = String(v === null || v === undefined ? '' : v).replace(/\D/g, '');
+  if (!p) return '';
+  if (p.indexOf('62') === 0) p = '0' + p.substring(2);
+  else if (p.charAt(0) === '8') p = '0' + p;
+  return p;
+}
+function crmPhoneKey_(v) { const p = crmPhoneLocal_(v); return p ? p.substring(1) : ''; }
+
+/* ---------- Gaya Excel bersama ---------- */
+const CRM_X = { primary: 'FF4C1D95', main: 'FF6D28D9', slate: 'FF475569', soft: 'FFEDE9FE', zebra: 'FFF7F6FD', line: 'FFD9DCE7', white: 'FFFFFFFF', text: 'FF1F2430', muted: 'FF6B7280' };
+function crmFill_(argb) { return { type: 'pattern', pattern: 'solid', fgColor: { argb: argb } }; }
+function crmSide_(argb) { return { style: 'thin', color: { argb: argb } }; }
+function crmBox_(argb) { return { top: crmSide_(argb), left: crmSide_(argb), bottom: crmSide_(argb), right: crmSide_(argb) }; }
+function crmColL_(i) { return String.fromCharCode(65 + i); }
+
+/* ---------- Template import (.xlsx) ---------- */
+function buildCrmTemplate_(ExcelJS, lists) {
+  const C = CRM_X, FONT = 'Calibri', NC = CRM_IMPORT_COLS.length;
+  const FIRST = CRM_TEMPLATE_FIRST_ROW, LAST = FIRST + CRM_TEMPLATE_ROWS - 1, HEAD = FIRST - 1;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Wonderland Marketing Center'; wb.company = 'Wonderland Samarinda'; wb.title = 'Template Import CRM Pelanggan'; wb.created = new Date();
+
+  const ws = wb.addWorksheet('Template Import', {
+    properties: { tabColor: { argb: C.main }, defaultRowHeight: 20 },
+    views: [{ state: 'frozen', xSplit: 2, ySplit: HEAD, showGridLines: false, activeCell: 'A' + FIRST }]
+  });
+  ws.columns = CRM_IMPORT_COLS.map(function(c) { return { width: c.width }; });
+  ws.mergeCells(1, 1, 1, NC);
+  const t = ws.getCell(1, 1);
+  t.value = 'TEMPLATE IMPORT DATA CRM PELANGGAN';
+  t.font = { name: FONT, size: 18, bold: true, color: { argb: C.white } };
+  t.fill = crmFill_(C.primary); t.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(1).height = 38;
+  ws.mergeCells(2, 1, 2, NC);
+  const st = ws.getCell(2, 1);
+  st.value = 'Wonderland Marketing Center  •  Isi data mulai baris ' + FIRST + ' (1 baris = 1 pelanggan)  •  Kolom bertanda * wajib diisi  •  Panduan lengkap ada di sheet "Petunjuk"';
+  st.font = { name: FONT, size: 10, italic: true, color: { argb: C.primary } };
+  st.fill = crmFill_(C.soft); st.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(2).height = 24; ws.getRow(3).height = 8;
+
+  CRM_IMPORT_COLS.forEach(function(c, i) {
+    const cell = ws.getCell(HEAD, i + 1);
+    cell.value = c.header + (c.req ? ' *' : '');
+    cell.font = { name: FONT, size: 11, bold: true, color: { argb: C.white } };
+    cell.fill = crmFill_(c.req ? C.main : C.slate);
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    cell.border = crmBox_(C.white);
+    cell.note = { texts: [{ font: { size: 9, name: FONT }, text: (c.req ? 'WAJIB. ' : 'Opsional. ') + c.hint }], margins: { insetmode: 'auto' } };
+  });
+  ws.getRow(HEAD).height = 32;
+
+  for (let r = FIRST; r <= LAST; r++) {
+    const zebra = (r - FIRST) % 2 === 1;
+    for (let i = 0; i < NC; i++) {
+      const c = CRM_IMPORT_COLS[i], cell = ws.getCell(r, i + 1);
+      cell.font = { name: FONT, size: 10, color: { argb: C.text } };
+      cell.border = crmBox_(C.line);
+      if (zebra) cell.fill = crmFill_(C.zebra);
+      if (c.kind === 'phone') { cell.numFmt = '@'; cell.alignment = { vertical: 'middle', horizontal: 'left' }; }
+      else if (c.kind === 'date') { cell.numFmt = 'yyyy-mm-dd'; cell.alignment = { vertical: 'middle', horizontal: 'center' }; }
+      else if (c.kind === 'int') { cell.numFmt = '#,##0'; cell.alignment = { vertical: 'middle', horizontal: 'right' }; }
+      else cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: c.key === 'minat' };
+    }
+  }
+
+  const listKeys = ['jenis_pelanggan', 'sumber', 'status', 'PIC'];
+  const listLabel = { jenis_pelanggan: 'Jenis Pelanggan', sumber: 'Sumber', status: 'Status', PIC: 'PIC' };
+  const listRef = {};
+  listKeys.forEach(function(k, i) {
+    const n = (lists[k] || []).length;
+    if (n) listRef[k] = 'Daftar!$' + crmColL_(i) + '$2:$' + crmColL_(i) + '$' + (n + 1);
+  });
+  CRM_IMPORT_COLS.forEach(function(c, i) {
+    const rng = crmColL_(i) + FIRST + ':' + crmColL_(i) + LAST;
+    if (c.kind === 'date') {
+      ws.dataValidations.add(rng, { type: 'date', operator: 'greaterThan', formulae: [new Date(Date.UTC(2000, 0, 1))], allowBlank: true,
+        showInputMessage: true, promptTitle: 'Tanggal', prompt: 'Format YYYY-MM-DD, contoh 2026-10-08',
+        showErrorMessage: true, errorStyle: 'stop', errorTitle: 'Tanggal tidak valid', error: 'Isi dengan tanggal yang benar, contoh 2026-10-08.' });
+    } else if (c.kind === 'int') {
+      ws.dataValidations.add(rng, { type: 'whole', operator: 'greaterThanOrEqual', formulae: [0], allowBlank: true,
+        showErrorMessage: true, errorStyle: 'stop', errorTitle: 'Angka tidak valid', error: 'Isi dengan angka bulat 0 atau lebih.' });
+    } else if (c.list && listRef[c.list]) {
+      ws.dataValidations.add(rng, { type: 'list', allowBlank: true, formulae: [listRef[c.list]],
+        showInputMessage: true, promptTitle: c.header, prompt: 'Pilih dari daftar',
+        showErrorMessage: true, errorStyle: 'stop', errorTitle: c.header + ' tidak ada di daftar', error: 'Pilih salah satu nilai dari daftar dropdown.' });
+    }
+  });
+  ws.autoFilter = { from: { row: HEAD, column: 1 }, to: { row: LAST, column: NC } };
+  ws.pageSetup = { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: '1:' + HEAD,
+    margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } };
+  ws.headerFooter = { oddFooter: '&LWonderland Marketing Center&CHalaman &P dari &N&R&D' };
+
+  const wi = wb.addWorksheet('Petunjuk', { properties: { tabColor: { argb: C.slate } }, views: [{ showGridLines: false }] });
+  wi.columns = [{ width: 6 }, { width: 28 }, { width: 11 }, { width: 62 }, { width: 30 }];
+  function estH(text, chars) { return Math.max(20, Math.ceil(String(text).length / chars) * 15 + 5); }
+  wi.mergeCells('A1:E1');
+  const pt = wi.getCell('A1');
+  pt.value = 'PETUNJUK PENGISIAN — IMPORT DATA CRM PELANGGAN';
+  pt.font = { name: FONT, size: 16, bold: true, color: { argb: C.white } };
+  pt.fill = crmFill_(C.primary); pt.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  wi.getRow(1).height = 36;
+  let r = 3;
+  function section(title) {
+    wi.mergeCells(r, 1, r, 5);
+    const c = wi.getCell(r, 1);
+    c.value = title; c.font = { name: FONT, size: 12, bold: true, color: { argb: C.primary } };
+    c.fill = crmFill_(C.soft); c.alignment = { vertical: 'middle', indent: 1 };
+    wi.getRow(r).height = 24; r++;
+  }
+  section('A.  Langkah Import');
+  [
+    'Isi data pada sheet "Template Import" mulai baris ' + FIRST + '. Satu baris = satu pelanggan. Jangan mengubah, menghapus, atau memindahkan baris judul kolom (baris ' + HEAD + ').',
+    'Kolom bertanda * (Nama, WhatsApp, Jenis Pelanggan, Sumber) wajib diisi. Kolom lain boleh dikosongkan.',
+    'Jenis Pelanggan, Sumber, Status, dan PIC dipilih dari dropdown. Nilai di luar daftar akan ditolak saat import.',
+    'Nomor WhatsApp boleh ditulis 0812..., 62812..., atau +62 812...; sistem merapikannya ke format 08xx. Nomor yang sama dengan pelanggan yang sudah ada dianggap duplikat dan dilewati.',
+    'Kunjungan Terakhir ditulis YYYY-MM-DD (contoh 2026-10-08). Total Transaksi & Total Nilai berupa angka; dikosongkan = 0. Status dikosongkan = AKTIF, Kota dikosongkan = Samarinda.',
+    'Simpan file sebagai .xlsx, lalu buka menu CRM Pelanggan → ⬆ Import Data → pilih file → periksa pratinjau → klik Import.',
+    'Maksimal ' + CRM_IMPORT_MAX_ROWS.toLocaleString('id-ID') + ' baris per file. File hasil ⬇ Export Excel juga bisa diimport kembali (baris yang sudah ada otomatis dilewati).'
+  ].forEach(function(txt, i) {
+    wi.mergeCells(r, 2, r, 5);
+    const n = wi.getCell(r, 1);
+    n.value = i + 1; n.font = { name: FONT, size: 10, bold: true, color: { argb: C.white } };
+    n.fill = crmFill_(C.main); n.alignment = { vertical: 'middle', horizontal: 'center' }; n.border = crmBox_(C.white);
+    const c = wi.getCell(r, 2);
+    c.value = txt; c.font = { name: FONT, size: 10, color: { argb: C.text } };
+    c.alignment = { vertical: 'middle', wrapText: true, indent: 1 }; c.border = { bottom: crmSide_(C.line) };
+    wi.getRow(r).height = estH(txt, 120); r++;
+  });
+  r++;
+  section('B.  Penjelasan Kolom');
+  ['No', 'Kolom', 'Wajib?', 'Format / Aturan', 'Contoh'].forEach(function(h, i) {
+    const c = wi.getCell(r, i + 1);
+    c.value = h; c.font = { name: FONT, size: 10, bold: true, color: { argb: C.white } };
+    c.fill = crmFill_(C.slate);
+    c.alignment = { vertical: 'middle', horizontal: i === 0 || i === 2 ? 'center' : 'left', indent: i === 0 || i === 2 ? 0 : 1 };
+    c.border = crmBox_(C.white);
+  });
+  wi.getRow(r).height = 24; r++;
+  CRM_IMPORT_COLS.forEach(function(c, i) {
+    let rule = c.hint;
+    if (c.list) {
+      const vals = lists[c.list] || [];
+      rule += vals.length ? ' — pilihan: ' + vals.join(', ') : ' — (belum ada pilihan di sistem)';
+    }
+    const ex = c.key === 'PIC' && (lists.PIC || []).length ? lists.PIC[0] : (c.list && (lists[c.list] || []).length ? lists[c.list][0] : c.example);
+    [i + 1, c.header, c.req ? 'WAJIB' : 'Opsional', rule, ex].forEach(function(v, j) {
+      const cell = wi.getCell(r, j + 1);
+      cell.value = v;
+      cell.font = { name: FONT, size: 10, bold: (j === 1) || (j === 2 && c.req), color: { argb: j === 2 && c.req ? C.main : C.text } };
+      cell.alignment = { vertical: 'middle', horizontal: j === 0 || j === 2 ? 'center' : 'left', wrapText: true, indent: j === 0 || j === 2 ? 0 : 1 };
+      cell.border = crmBox_(C.line);
+      if (i % 2 === 1) cell.fill = crmFill_(C.zebra);
+    });
+    wi.getRow(r).height = estH(rule, 66); r++;
+  });
+  wi.pageSetup = { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+
+  const wl = wb.addWorksheet('Daftar', { state: 'hidden' });
+  listKeys.forEach(function(k, i) {
+    wl.getCell(1, i + 1).value = listLabel[k]; wl.getCell(1, i + 1).font = { bold: true }; wl.getColumn(i + 1).width = 26;
+    (lists[k] || []).forEach(function(v, j) { wl.getCell(j + 2, i + 1).value = v; });
+  });
+  wb.views = [{ activeTab: 0, firstSheet: 0, visibility: 'visible' }];
+  return wb;
+}
+
+/* ---------- Membaca & memvalidasi file import ---------- */
+function parseCrmWorkbook_(wb) {
+  let found = null;
+  for (let w = 0; w < wb.worksheets.length && !found; w++) {
+    const ws = wb.worksheets[w];
+    if (ws.state === 'hidden') continue;
+    const scan = Math.min(ws.rowCount, 25);
+    for (let r = 1; r <= scan && !found; r++) {
+      const map = {};
+      ws.getRow(r).eachCell({ includeEmpty: false }, function(cell, col) {
+        const n = xlNorm_(xlCellValue_(cell));
+        Object.keys(CRM_HEADER_ALIASES).forEach(function(k) {
+          if (map[k] === undefined && CRM_HEADER_ALIASES[k].indexOf(n) >= 0) map[k] = col;
+        });
+      });
+      if (map.nama && map.whatsapp) found = { ws: ws, headerRow: r, map: map };
+    }
+  }
+  if (!found) throw new Error('Format file tidak dikenali. Gunakan template dari tombol "⬇ Template" (kolom Nama dan WhatsApp wajib ada).');
+  const out = [];
+  const last = Math.min(found.ws.rowCount, found.headerRow + CRM_IMPORT_MAX_ROWS + 500);
+  for (let r = found.headerRow + 1; r <= last; r++) {
+    const row = found.ws.getRow(r), raw = {};
+    let any = false;
+    Object.keys(found.map).forEach(function(k) {
+      const v = xlCellValue_(row.getCell(found.map[k]));
+      raw[k] = v;
+      if (v !== '' && v !== null && v !== undefined && String(v).trim() !== '') any = true;
+    });
+    if (any && /^TOTAL \(/i.test(String(raw.nama || ''))) break;   // baris total dari file hasil Export
+    if (any) out.push({ rowNo: r, raw: raw });
+  }
+  return out;
+}
+
+function validateCrmRows_(parsed, lists, existingKeys) {
+  const seen = {};
+  function canon(list, val) {
+    const x = String(val).trim().toLowerCase();
+    for (let i = 0; i < list.length; i++) if (String(list[i]).trim().toLowerCase() === x) return list[i];
+    return null;
+  }
+  return parsed.map(function(p) {
+    const raw = p.raw, errors = [], rec = {};
+    rec.nama = xlToText_(raw.nama);
+    if (!rec.nama) errors.push('Nama wajib diisi');
+    const waRaw = xlToText_(raw.whatsapp);
+    rec.whatsapp = crmPhoneLocal_(waRaw);
+    if (!waRaw) errors.push('WhatsApp wajib diisi');
+    else if (rec.whatsapp.length < 9 || rec.whatsapp.length > 15) errors.push('Nomor WhatsApp "' + waRaw + '" tidak valid');
+    rec.email = xlToText_(raw.email);
+    if (rec.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rec.email)) errors.push('Format email tidak valid');
+    rec.kota = xlToText_(raw.kota) || 'Samarinda';
+    [['jenis_pelanggan', 'Jenis Pelanggan', lists.jenis_pelanggan, true], ['sumber', 'Sumber', lists.sumber, true], ['PIC', 'PIC', lists.PIC, false]].forEach(function(f) {
+      const val = xlToText_(raw[f[0]]);
+      if (!val) { if (f[3]) errors.push(f[1] + ' wajib diisi'); rec[f[0]] = ''; return; }
+      if (!f[2] || !f[2].length) { rec[f[0]] = val; return; }
+      const c = canon(f[2], val);
+      if (c === null) { errors.push(f[1] + ' "' + val + '" tidak ada di daftar'); rec[f[0]] = val; } else rec[f[0]] = c;
+    });
+    const stRaw = xlToText_(raw.status);
+    if (!stRaw) rec.status = 'AKTIF';
+    else {
+      const s = canon(CRM_STATUS_OPTIONS, stRaw);
+      if (s === null) { errors.push('Status "' + stRaw + '" tidak valid (AKTIF/PASIF/VIP)'); rec.status = stRaw; } else rec.status = s;
+    }
+    const tglRaw = xlToText_(raw.tanggal_kunjungan_terakhir);
+    if (!tglRaw) rec.tanggal_kunjungan_terakhir = '';
+    else {
+      const d = xlToDateStr_(raw.tanggal_kunjungan_terakhir);
+      if (!d) errors.push('Kunjungan Terakhir tidak valid (YYYY-MM-DD)');
+      rec.tanggal_kunjungan_terakhir = d;
+    }
+    [['total_transaksi', 'Total Transaksi'], ['total_nilai_transaksi', 'Total Nilai Transaksi']].forEach(function(f) {
+      const n = xlToInt_(raw[f[0]]);
+      if (n.err) { errors.push(f[1] + ' harus angka ≥ 0'); rec[f[0]] = 0; } else rec[f[0]] = n.v;
+    });
+    rec.minat = xlToText_(raw.minat);
+    let dup = false;
+    if (!errors.length) {
+      const key = crmPhoneKey_(rec.whatsapp);
+      if (existingKeys[key] || seen[key]) dup = true;
+      seen[key] = true;
+    }
+    return { rowNo: p.rowNo, rec: rec, errors: errors, dup: dup };
+  });
+}
+
+async function downloadCrmTemplate() {
+  showLoading('Menyiapkan template...');
+  try {
+    const ExcelJS = await loadExcelJS_();
+    const wb = buildCrmTemplate_(ExcelJS, crmImportLists_());
+    const buf = await wb.xlsx.writeBuffer();
+    downloadBlob_(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'Template-Import-CRM-Pelanggan.xlsx');
+    toast('Template import CRM diunduh.');
+  } catch (e) {
+    toast((e && e.message) || 'Template gagal dibuat.', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+function openCrmImport() {
+  const st = { rows: [], file: '' };
+  openModal({
+    title: '⬆ Import Data CRM Pelanggan',
+    wide: true,
+    submitText: 'Import Data',
+    body:
+      '<div class="imp-steps">' +
+        '<div class="imp-step"><span class="imp-no">1</span><div><div class="imp-t">Unduh template</div>' +
+          '<div class="imp-d">Template berisi dropdown Jenis, Sumber, Status &amp; PIC sesuai data sistem, serta sheet Petunjuk.</div>' +
+          '<button type="button" class="btn btn-outline btn-sm" id="impTplBtn">⬇ Unduh Template (.xlsx)</button></div></div>' +
+        '<div class="imp-step"><span class="imp-no">2</span><div><div class="imp-t">Isi data</div>' +
+          '<div class="imp-d">Isi mulai baris 5. Kolom bertanda * wajib. Maksimal ' + CRM_IMPORT_MAX_ROWS.toLocaleString('id-ID') + ' baris.</div></div></div>' +
+        '<div class="imp-step"><span class="imp-no">3</span><div><div class="imp-t">Pilih file &amp; periksa</div>' +
+          '<div class="imp-d">Pratinjau dan hasil pengecekan tampil sebelum data disimpan.</div>' +
+          '<label class="btn btn-primary btn-sm imp-file">📁 Pilih File Excel<input type="file" id="impFile" accept=".xlsx" style="display:none"></label>' +
+          '<span class="imp-fname" id="impFname">Belum ada file</span></div></div>' +
+      '</div>' +
+      '<label class="imp-dup"><input type="checkbox" id="impSkipDup" checked> Lewati pelanggan yang nomor WhatsApp-nya sudah ada di CRM</label>' +
+      '<div id="impResult"></div>',
+    onSubmit: function() { doImport(); }
+  });
+  const modal = document.querySelector('#modalRoot .modal');
+  if (modal) modal.classList.add('xwide');
+  const submit = document.getElementById('modalSubmit');
+  submit.disabled = true;
+  document.getElementById('impTplBtn').onclick = downloadCrmTemplate;
+  document.getElementById('impSkipDup').onchange = function() { renderResult(); };
+  document.getElementById('impFile').onchange = async function(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    if (!/\.xlsx$/i.test(file.name)) { toast('Gunakan file Excel berformat .xlsx', 'error'); ev.target.value = ''; return; }
+    document.getElementById('impFname').textContent = file.name;
+    showLoading('Membaca file...');
+    try {
+      const ExcelJS = await loadExcelJS_();
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(await file.arrayBuffer());
+      const parsed = parseCrmWorkbook_(wb);
+      if (!parsed.length) throw new Error('Tidak ada baris data pada file. Isi data mulai baris 5 pada sheet "Template Import".');
+      if (parsed.length > CRM_IMPORT_MAX_ROWS) throw new Error('Terlalu banyak baris (' + parsed.length + '). Maksimal ' + CRM_IMPORT_MAX_ROWS + ' baris per file.');
+      const existing = {};
+      (App.grid ? App.grid.getData() : []).forEach(function(r) { const k = crmPhoneKey_(r.whatsapp); if (k) existing[k] = true; });
+      st.rows = validateCrmRows_(parsed, crmImportLists_(), existing);
+      st.file = file.name;
+      renderResult();
+    } catch (e) {
+      st.rows = [];
+      document.getElementById('impResult').innerHTML = '<div class="alert error-state">⚠️ ' + esc((e && e.message) || 'File tidak dapat dibaca.') + '</div>';
+      submit.disabled = true; submit.textContent = 'Import Data';
+    } finally {
+      hideLoading();
+    }
+  };
+
+  function importable() {
+    const skip = document.getElementById('impSkipDup').checked;
+    return st.rows.filter(function(r) { return !r.errors.length && (!r.dup || !skip); });
+  }
+  function renderResult() {
+    const host = document.getElementById('impResult');
+    if (!host) return;
+    const total = st.rows.length;
+    const nErr = st.rows.filter(function(r) { return r.errors.length; }).length;
+    const nDup = st.rows.filter(function(r) { return !r.errors.length && r.dup; }).length;
+    const ready = importable().length;
+    const MAXSHOW = 300;
+    let html = '<div class="imp-sum">' +
+      '<span class="imp-pill"><b>' + fmtNum(total) + '</b> baris terbaca</span>' +
+      '<span class="imp-pill ok"><b>' + fmtNum(ready) + '</b> siap diimport</span>' +
+      '<span class="imp-pill warn"><b>' + fmtNum(nDup) + '</b> duplikat</span>' +
+      '<span class="imp-pill bad"><b>' + fmtNum(nErr) + '</b> error</span></div>';
+    if (nErr) html += '<div class="alert warn" style="margin-bottom:10px">⚠️ Baris yang error tidak akan diimport. Perbaiki di file Excel lalu pilih file lagi, atau lanjutkan untuk mengimport baris yang valid saja.</div>';
+    html += '<div class="grid-table-wrap imp-table"><table class="table-plain"><thead><tr><th>Baris</th><th>Status</th><th>Nama</th><th>WhatsApp</th><th>Jenis</th><th>Sumber</th><th>Status CRM</th><th>PIC</th><th>Keterangan</th></tr></thead><tbody>';
+    st.rows.slice(0, MAXSHOW).forEach(function(r) {
+      const badge = r.errors.length ? '<span class="badge b-red">ERROR</span>' : (r.dup ? '<span class="badge b-amber">DUPLIKAT</span>' : '<span class="badge b-green">SIAP</span>');
+      const note = r.errors.length ? r.errors.join('; ') : (r.dup ? 'Nomor sudah ada / dobel di file' + (document.getElementById('impSkipDup').checked ? ' — dilewati' : ' — tetap diimport') : '');
+      html += '<tr><td>' + r.rowNo + '</td><td>' + badge + '</td><td>' + esc(r.rec.nama || '—') + '</td><td>' + esc(r.rec.whatsapp || '—') + '</td><td>' + esc(r.rec.jenis_pelanggan || '—') +
+        '</td><td>' + esc(r.rec.sumber || '—') + '</td><td>' + esc(r.rec.status || '—') + '</td><td>' + esc(r.rec.PIC || '—') + '</td>' +
+        '<td style="color:' + (r.errors.length ? 'var(--danger)' : 'var(--muted)') + ';min-width:200px">' + esc(note) + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    if (total > MAXSHOW) html += '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">Menampilkan ' + MAXSHOW + ' dari ' + fmtNum(total) + ' baris. Seluruh baris tetap diproses.</div>';
+    host.innerHTML = html;
+    submit.disabled = ready === 0;
+    submit.textContent = ready > 0 ? 'Import ' + fmtNum(ready) + ' Data' : 'Tidak ada data untuk diimport';
+  }
+
+  async function doImport() {
+    const list = importable();
+    if (!list.length) return;
+    const skip = document.getElementById('impSkipDup').checked;
+    const payload = list.map(function(r) { return r.rec; });
+    let added = 0, skipped = 0, done = 0;
+    showLoading('Mengimport data...');
+    try {
+      for (let i = 0; i < payload.length; i += 200) {
+        const res = await api('apiImportCustomers', App.token, payload.slice(i, i + 200), skip);
+        added += res.added || 0; skipped += res.skipped || 0; done += Math.min(200, payload.length - i);
+      }
+      hideLoading();
+      closeModal();
+      toast(fmtNum(added) + ' pelanggan berhasil diimport' + (skipped ? ', ' + fmtNum(skipped) + ' dilewati (nomor sudah ada).' : '.'));
+      reloadGrid('customers');
+    } catch (e) {
+      hideLoading();
+      toast((e && e.message ? e.message : 'Import gagal.') + (added ? ' (' + fmtNum(added) + ' baris sudah tersimpan sebelum error.)' : ''), 'error');
+      if (added) { closeModal(); reloadGrid('customers'); }
+    }
+  }
+}
+
+/* ---------- Export Excel (.xlsx) ---------- */
+function crmToNum_(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  const n = parseFloat(String(v).replace(/[^\d.-]/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+function crmToDate_(v) {   // 'yyyy-mm-dd[ hh:mm:ss]' -> Date (UTC) atau null
+  const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)));
+}
+const CRM_EXPORT_COLS = [
+  { key: 'customer_id', header: 'ID', width: 12, align: 'center' },
+  { key: 'nama', header: 'Nama', width: 28 },
+  { key: 'whatsapp', header: 'WhatsApp', width: 17, kind: 'phone' },
+  { key: 'email', header: 'Email', width: 28 },
+  { key: 'kota', header: 'Kota', width: 15 },
+  { key: 'jenis_pelanggan', header: 'Jenis Pelanggan', width: 18, align: 'center' },
+  { key: 'sumber', header: 'Sumber', width: 16 },
+  { key: 'status', header: 'Status', width: 11, align: 'center', kind: 'status' },
+  { key: 'PIC', header: 'PIC', width: 20 },
+  { key: 'tanggal_kunjungan_terakhir', header: 'Kunjungan Terakhir', width: 17, kind: 'date', align: 'center' },
+  { key: 'total_transaksi', header: 'Total Transaksi', width: 14, kind: 'int' },
+  { key: 'total_nilai_transaksi', header: 'Total Nilai Transaksi (Rp)', width: 22, kind: 'rp' },
+  { key: 'minat', header: 'Minat / Catatan', width: 42, wrap: true },
+  { key: 'created_at', header: 'Dibuat', width: 14, kind: 'date', align: 'center' }
+];
+
+function buildCrmExport_(ExcelJS, rows, meta) {
+  const C = CRM_X, FONT = 'Calibri', NC = CRM_EXPORT_COLS.length, HEAD = 4, FIRST = 5, LASTROW = FIRST + rows.length - 1;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Wonderland Marketing Center'; wb.company = 'Wonderland Samarinda'; wb.title = 'Data CRM Pelanggan'; wb.created = new Date();
+
+  const ws = wb.addWorksheet('Data Pelanggan', {
+    properties: { tabColor: { argb: C.main }, defaultRowHeight: 20 },
+    views: [{ state: 'frozen', xSplit: 2, ySplit: HEAD, showGridLines: false, activeCell: 'A' + FIRST }]
+  });
+  ws.columns = CRM_EXPORT_COLS.map(function(c) { return { width: c.width }; });
+  ws.mergeCells(1, 1, 1, NC);
+  const t = ws.getCell(1, 1);
+  t.value = 'DATA CRM PELANGGAN — WONDERLAND SAMARINDA';
+  t.font = { name: FONT, size: 18, bold: true, color: { argb: C.white } };
+  t.fill = crmFill_(C.primary); t.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(1).height = 38;
+  ws.mergeCells(2, 1, 2, NC);
+  const sub = ws.getCell(2, 1);
+  sub.value = 'Diekspor ' + meta.when + ' oleh ' + meta.user + '  •  ' + meta.scope + '  •  ' + rows.length.toLocaleString('id-ID') + ' pelanggan';
+  sub.font = { name: FONT, size: 10, italic: true, color: { argb: C.primary } };
+  sub.fill = crmFill_(C.soft); sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(2).height = 24; ws.getRow(3).height = 8;
+
+  CRM_EXPORT_COLS.forEach(function(c, i) {
+    const cell = ws.getCell(HEAD, i + 1);
+    cell.value = c.header;
+    cell.font = { name: FONT, size: 11, bold: true, color: { argb: C.white } };
+    cell.fill = crmFill_(C.main);
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    cell.border = crmBox_(C.white);
+  });
+  ws.getRow(HEAD).height = 32;
+
+  const STAT = { AKTIF: ['FFD1FAE5', 'FF065F46'], VIP: ['FFFEF3C7', 'FF92400E'], PASIF: ['FFE5E7EB', 'FF374151'] };
+  rows.forEach(function(row, ri) {
+    const r = FIRST + ri, zebra = ri % 2 === 1;
+    CRM_EXPORT_COLS.forEach(function(c, i) {
+      const cell = ws.getCell(r, i + 1);
+      let v = row[c.key];
+      if (c.kind === 'int' || c.kind === 'rp') { v = crmToNum_(v); cell.numFmt = c.kind === 'rp' ? '"Rp" #,##0' : '#,##0'; cell.alignment = { vertical: 'middle', horizontal: 'right' }; }
+      else if (c.kind === 'date') { v = crmToDate_(v) || ''; cell.numFmt = 'dd/mm/yyyy'; cell.alignment = { vertical: 'middle', horizontal: 'center' }; }
+      else if (c.kind === 'phone') { v = v === null || v === undefined ? '' : String(v); cell.numFmt = '@'; cell.alignment = { vertical: 'middle', horizontal: 'left' }; }
+      else { v = v === null || v === undefined ? '' : String(v); cell.alignment = { vertical: 'middle', horizontal: c.align || 'left', wrapText: !!c.wrap }; }
+      cell.value = v === '' ? null : v;
+      cell.font = { name: FONT, size: 10, color: { argb: C.text } };
+      cell.border = crmBox_(C.line);
+      if (zebra) cell.fill = crmFill_(C.zebra);
+      if (c.kind === 'status' && STAT[String(v).toUpperCase()]) {
+        const sc = STAT[String(v).toUpperCase()];
+        cell.fill = crmFill_(sc[0]); cell.font = { name: FONT, size: 10, bold: true, color: { argb: sc[1] } };
+      }
+    });
+  });
+
+  // Baris total (SUBTOTAL ikut berubah bila Anda memfilter di Excel)
+  const tr = LASTROW + 1;
+  ws.mergeCells(tr, 1, tr, 10);
+  const tl = ws.getCell(tr, 1);
+  tl.value = 'TOTAL (mengikuti filter)';
+  tl.font = { name: FONT, size: 11, bold: true, color: { argb: C.white } };
+  tl.fill = crmFill_(C.slate); tl.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+  let sumTx = 0, sumNilai = 0;
+  rows.forEach(function(r) { sumTx += crmToNum_(r.total_transaksi); sumNilai += crmToNum_(r.total_nilai_transaksi); });
+  [[11, 'K', sumTx, '#,##0'], [12, 'L', sumNilai, '"Rp" #,##0']].forEach(function(f) {
+    const c = ws.getCell(tr, f[0]);
+    c.value = { formula: 'SUBTOTAL(109,' + f[1] + FIRST + ':' + f[1] + LASTROW + ')', result: f[2] };
+    c.numFmt = f[3]; c.font = { name: FONT, size: 11, bold: true, color: { argb: C.white } };
+    c.fill = crmFill_(C.slate); c.alignment = { vertical: 'middle', horizontal: 'right' };
+  });
+  [13, 14].forEach(function(col) { ws.getCell(tr, col).fill = crmFill_(C.slate); });
+  ws.getRow(tr).height = 24;
+
+  ws.autoFilter = { from: { row: HEAD, column: 1 }, to: { row: Math.max(LASTROW, HEAD), column: NC } };
+  ws.pageSetup = { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: '1:' + HEAD,
+    margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } };
+  ws.headerFooter = { oddFooter: '&LWonderland Marketing Center — CRM Pelanggan&CHalaman &P dari &N&R&D' };
+
+  /* ===== Sheet Ringkasan ===== */
+  const wr = wb.addWorksheet('Ringkasan', { properties: { tabColor: { argb: C.slate } }, views: [{ showGridLines: false }] });
+  wr.columns = [{ width: 30 }, { width: 14 }, { width: 22 }, { width: 4 }, { width: 30 }, { width: 14 }, { width: 22 }];
+  wr.mergeCells('A1:G1');
+  const rt = wr.getCell('A1');
+  rt.value = 'RINGKASAN CRM PELANGGAN';
+  rt.font = { name: FONT, size: 16, bold: true, color: { argb: C.white } };
+  rt.fill = crmFill_(C.primary); rt.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  wr.getRow(1).height = 36;
+  wr.mergeCells('A2:G2');
+  const rs = wr.getCell('A2');
+  rs.value = meta.scope + '  •  diekspor ' + meta.when;
+  rs.font = { name: FONT, size: 10, italic: true, color: { argb: C.primary } };
+  rs.fill = crmFill_(C.soft); rs.alignment = { vertical: 'middle', indent: 1 };
+  wr.getRow(2).height = 22;
+
+  // Kartu ringkas
+  const kpis = [['Total Pelanggan', rows.length, '#,##0'], ['Total Transaksi', sumTx, '#,##0'], ['Total Nilai Transaksi', sumNilai, '"Rp" #,##0'], ['Rata-rata Nilai / Pelanggan', rows.length ? sumNilai / rows.length : 0, '"Rp" #,##0']];
+  const kpiCols = [1, 2, 5, 6];
+  wr.getRow(4).height = 20; wr.getRow(5).height = 30;
+  [[1, 1], [2, 3], [5, 5], [6, 7]].forEach(function(span, i) {
+    if (span[0] !== span[1]) { wr.mergeCells(4, span[0], 4, span[1]); wr.mergeCells(5, span[0], 5, span[1]); }
+    const lab = wr.getCell(4, span[0]), val = wr.getCell(5, span[0]);
+    lab.value = kpis[i][0]; lab.font = { name: FONT, size: 9, bold: true, color: { argb: C.muted } };
+    lab.fill = crmFill_(C.soft); lab.alignment = { horizontal: 'center', vertical: 'middle' };
+    val.value = kpis[i][1]; val.numFmt = kpis[i][2]; val.font = { name: FONT, size: 15, bold: true, color: { argb: C.primary } };
+    val.fill = crmFill_(C.soft); val.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+
+  function groupBy(key) {
+    const m = {};
+    rows.forEach(function(r) {
+      const k = String(r[key] || '').trim() || '(Kosong)';
+      if (!m[k]) m[k] = { n: 0, v: 0 };
+      m[k].n++; m[k].v += crmToNum_(r.total_nilai_transaksi);
+    });
+    return Object.keys(m).map(function(k) { return { k: k, n: m[k].n, v: m[k].v }; }).sort(function(a, b) { return b.n - a.n || b.v - a.v; });
+  }
+  function table(col, top, title, data, labelHead) {
+    const hdr = wr.getCell(top, col);
+    wr.mergeCells(top, col, top, col + 2);
+    hdr.value = title; hdr.font = { name: FONT, size: 11, bold: true, color: { argb: C.primary } };
+    hdr.fill = crmFill_(C.soft); hdr.alignment = { vertical: 'middle', indent: 1 };
+    wr.getRow(top).height = 22;
+    [labelHead, 'Jumlah', 'Total Nilai (Rp)'].forEach(function(h, j) {
+      const c = wr.getCell(top + 1, col + j);
+      c.value = h; c.font = { name: FONT, size: 10, bold: true, color: { argb: C.white } };
+      c.fill = crmFill_(C.slate); c.alignment = { horizontal: j === 0 ? 'left' : 'right', vertical: 'middle', indent: j === 0 ? 1 : 0 }; c.border = crmBox_(C.white);
+    });
+    data.forEach(function(d, i) {
+      [d.k, d.n, d.v].forEach(function(v, j) {
+        const c = wr.getCell(top + 2 + i, col + j);
+        c.value = v; c.font = { name: FONT, size: 10, color: { argb: C.text } }; c.border = crmBox_(C.line);
+        c.numFmt = j === 1 ? '#,##0' : (j === 2 ? '"Rp" #,##0' : 'General');
+        c.alignment = { horizontal: j === 0 ? 'left' : 'right', vertical: 'middle', indent: j === 0 ? 1 : 0 };
+        if (i % 2 === 1) c.fill = crmFill_(C.zebra);
+      });
+    });
+    return top + 2 + data.length;
+  }
+  const e1 = table(1, 7, 'Per Status', groupBy('status'), 'Status');
+  const e2 = table(5, 7, 'Per Jenis Pelanggan', groupBy('jenis_pelanggan'), 'Jenis');
+  const e3 = table(1, Math.max(e1, e2) + 1, 'Per Sumber', groupBy('sumber'), 'Sumber');
+  const topN = rows.slice().sort(function(a, b) { return crmToNum_(b.total_nilai_transaksi) - crmToNum_(a.total_nilai_transaksi); }).slice(0, 10)
+    .filter(function(r) { return crmToNum_(r.total_nilai_transaksi) > 0; })
+    .map(function(r) { return { k: r.nama || r.customer_id, n: crmToNum_(r.total_transaksi), v: crmToNum_(r.total_nilai_transaksi) }; });
+  table(5, Math.max(e1, e2) + 1, 'Top 10 Pelanggan (Nilai Transaksi)', topN, 'Nama');
+  wr.pageSetup = { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+
+  wb.views = [{ activeTab: 0, firstSheet: 0, visibility: 'visible' }];
+  return wb;
+}
+
+async function exportCrmExcel(selectedIds) {
+  if (!App.grid) return;
+  const all = App.grid.getData();
+  let rows, scope;
+  if (selectedIds && selectedIds.length) {
+    const set = {};
+    selectedIds.forEach(function(id) { set[String(id)] = true; });
+    rows = App.grid.getFiltered().filter(function(r) { return set[String(r.customer_id)]; });
+    scope = rows.length + ' pelanggan terpilih';
+  } else {
+    rows = App.grid.getFiltered();
+    scope = rows.length === all.length ? 'Semua data pelanggan' : 'Sesuai filter/pencarian yang aktif (' + rows.length + ' dari ' + all.length + ' pelanggan)';
+  }
+  if (!rows.length) { toast('Tidak ada data untuk diekspor.', 'error'); return; }
+  showLoading('Menyiapkan file Excel...');
+  try {
+    const ExcelJS = await loadExcelJS_();
+    const now = new Date();
+    const pad = function(n) { return (n < 10 ? '0' : '') + n; };
+    const ymd = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+    const meta = { when: pad(now.getDate()) + '/' + pad(now.getMonth() + 1) + '/' + now.getFullYear() + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()),
+      user: (App.user && (App.user.nama || App.user.username)) || '-', scope: scope };
+    const wb = buildCrmExport_(ExcelJS, rows, meta);
+    const buf = await wb.xlsx.writeBuffer();
+    downloadBlob_(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'Data-CRM-Pelanggan_' + ymd + '.xlsx');
+    toast(fmtNum(rows.length) + ' pelanggan diekspor ke Excel.');
+  } catch (e) {
+    toast((e && e.message) || 'Export gagal.', 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
 async function renderModulePage(moduleKey) {
   const cfg = MODULE_CONFIG[moduleKey];
   const container = document.getElementById('pageContainer');
@@ -2714,6 +3355,18 @@ async function renderModulePage(moduleKey) {
         cls: 'btn-outline', title: 'Statistik peserta dari data yang tampil',
         label: '📊 Statistik',
         onClick: function() { participantStatsModal(); }
+      }] : moduleKey === 'customers' ? [{
+        cls: 'btn-outline', title: 'Import data pelanggan dari file Excel (.xlsx)',
+        label: '⬆ Import Data',
+        onClick: function() { openCrmImport(); }
+      }, {
+        cls: 'btn-outline', title: 'Unduh template import CRM (.xlsx)',
+        label: '⬇ Template',
+        onClick: function() { downloadCrmTemplate(); }
+      }, {
+        cls: 'btn-primary', title: 'Export ke Excel (.xlsx): baris yang dipilih, atau semua data sesuai filter/pencarian',
+        label: function(n) { return n > 0 ? '📊 Export Excel (' + n + ')' : '📊 Export Excel'; },
+        onClick: function(ids) { exportCrmExcel(ids); }
       }] : moduleKey === 'content' ? [{
         cls: 'btn-outline', title: 'Import data konten dari file Excel (.xlsx)',
         label: '⬆ Import Data',
