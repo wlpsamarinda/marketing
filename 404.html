@@ -2,14 +2,15 @@
 <html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wonderland Samarinda</title>
 <script>
-/* GitHub Pages: /<slug> -> public.html?page=<slug> (link landing page berbasis "base URL + / + slug"). */
+/* GitHub Pages: /<slug> -> public.html?page=<slug>.
+ * Nama file seperti index.html / public.html di URL diabaikan (mis. /repo/index.html/promo -> slug "promo"). */
 (function () {
-  var base = location.pathname.replace(/[^\/]*$/, '');
   var parts = location.pathname.split('/').filter(Boolean);
-  // Project site (user.github.io/repo/slug): segmen pertama adalah nama repo.
   var isProject = /\.github\.io$/.test(location.hostname);
-  var slug = isProject ? parts[1] : parts[0];
   var root = isProject ? '/' + (parts[0] || '') + '/' : '/';
+  var rest = isProject ? parts.slice(1) : parts;
+  var slug = '';
+  for (var i = 0; i < rest.length; i++) { if (!/\.html?$/i.test(rest[i])) { slug = rest[i]; break; } }
   if (slug) location.replace(root + 'public.html?page=' + encodeURIComponent(slug) + location.hash);
   else location.replace(root);
 })();

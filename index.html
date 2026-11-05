@@ -500,6 +500,7 @@ tr.or-off{opacity:.55}
       </div>
       <button class="btn btn-primary btn-full" type="submit" id="btnLogin">Masuk</button>
     </form>
+    <p class="auth-foot">Akun default: <b>admin</b> / <b>admin123</b> — wajib diganti setelah login pertama.</p>
   </div>
 </div>
 
@@ -1641,14 +1642,16 @@ const MODULE_CONFIG = {
   },
   outreachtpl: {
     title: 'Materi Outreach', icon: '📝', desc: 'Template pesan WhatsApp untuk Customer Outreach — teks atau gambar + caption. Gunakan {nama}, {pic}, dan {campaign} sebagai isian otomatis',
-    idField: 'materi_id',
+    idField: 'materi_id', customEditor: 'outreachtpl',
     columns: [
       { key: 'materi_id', label: 'ID', type: 'badge', width: 100 },
       { key: 'nama_materi', label: 'Nama Materi' },
       { key: 'tipe', label: 'Tipe', type: 'badge' },
       { key: 'segmen', label: 'Segmen' },
       { key: 'isi_pesan', label: 'Isi Pesan / Caption' },
-      { key: 'gambar_url', label: 'Link Gambar', visible: false },
+      { key: 'gambar_url', label: 'Gambar', visible: false },
+      { key: 'spin_aktif', label: 'Spin', visible: false },
+      { key: 'spin_varian', label: 'Variasi Spin', visible: false },
       { key: 'status', label: 'Status', type: 'badge' }
     ],
     fields: [
@@ -1656,7 +1659,7 @@ const MODULE_CONFIG = {
       { key: 'tipe', label: 'Tipe Materi', type: 'select', options: ['TEKS', 'GAMBAR + CAPTION'], defaultValue: 'TEKS', required: true },
       { key: 'segmen', label: 'Cocok untuk Segmen', type: 'select', options: outreachSegmentOptions, hint: 'Opsional. Materi yang cocok dengan segmen ditandai ★ saat memilih materi.' },
       { key: 'status', label: 'Status', type: 'select', options: ['AKTIF', 'NONAKTIF'], defaultValue: 'AKTIF' },
-      { key: 'gambar_url', label: 'Link Gambar', hint: 'Wajib untuk tipe GAMBAR + CAPTION. Gunakan link Google Drive (akses "Siapa saja yang memiliki link") atau link gambar langsung.', full: true },
+      { key: 'gambar_url', label: 'Gambar', hint: 'Diunggah lewat editor materi.', full: true },
       { key: 'isi_pesan', label: 'Isi Pesan / Caption', type: 'textarea', required: true, full: true, hint: 'Isian otomatis: {nama} = nama customer, {pic} = nama PIC, {campaign} = nama campaign.' }
     ],
     filters: [{ key: 'tipe', label: 'Tipe', options: ['TEKS', 'GAMBAR + CAPTION'] }, { key: 'status', label: 'Status', options: ['AKTIF', 'NONAKTIF'] }]
@@ -3646,7 +3649,350 @@ function openRecordForm(moduleKey, row) {
   const cfg = MODULE_CONFIG[moduleKey];
   if (cfg.customEditor === 'activities') return openActivityEditor(row);
   if (cfg.customEditor === 'landingpages') return openLandingEditor(row);
+  if (cfg.customEditor === 'outreachtpl') return openTemplateEditor(row);
   return openGridEditor(moduleKey, row);
+}
+
+/* ==================== OUTREACH: SPIN TEKS, GAMBAR UNGGAHAN, JADWAL KIRIM ==================== */
+const OR_IMG = {};          // cache dataUrl gambar materi (ref -> dataUrl)
+const OR_IMG_PENDING = {};  // ref -> Promise
+function orIsRef(u) { return /^wmc-img:IMG-\d+$/.test(String(u || '')); }
+function orLoadImg(ref) {
+  if (OR_IMG[ref]) return Promise.resolve(OR_IMG[ref]);
+  if (!OR_IMG_PENDING[ref]) {
+    OR_IMG_PENDING[ref] = api('apiOutreachGetImage', App.token, ref).then(function(r) { OR_IMG[ref] = r.data.dataUrl; return OR_IMG[ref]; })
+      .catch(function() { delete OR_IMG_PENDING[ref]; return ''; });
+  }
+  return OR_IMG_PENDING[ref];
+}
+// Isi semua <img data-ref="..."> di dalam elemen
+function orHydrateImgs(host) {
+  if (!host) return;
+  host.querySelectorAll('img[data-ref]').forEach(function(img) {
+    orLoadImg(img.getAttribute('data-ref')).then(function(src) { if (src) img.src = src; else img.style.display = 'none'; });
+  });
+}
+function orImgTag(u, style) {
+  if (!u) return '';
+  if (orIsRef(u)) return '<img data-ref="' + esc(u) + '" alt="Materi" style="' + style + '">';
+  return '<img src="' + esc(orImageUrl(u)) + '" alt="Materi" referrerpolicy="no-referrer" style="' + style + '" onerror="this.style.display=\'none\'">';
+}
+
+/* ---- Spin teks ---- */
+function orSpinVariants(t) {
+  if (!t || String(t.spin_aktif) !== '1') return [];
+  let arr = [];
+  try { arr = JSON.parse(t.spin_varian || '[]'); } catch (e) { arr = []; }
+  return Array.isArray(arr) ? arr.filter(function(x) { return String(x || '').trim(); }) : [];
+}
+// {a|b|c} -> salah satu; {nama} (tanpa |) dibiarkan sebagai isian otomatis
+function orSpinInline(s) {
+  return String(s).replace(/\{([^{}|]*\|[^{}]*)\}/g, function(_, g) {
+    const p = g.split('|');
+    return p[Math.floor(Math.random() * p.length)];
+  });
+}
+function orSpinPick(t) {
+  const base = String(t.isi_pesan || '');
+  if (!t || String(t.spin_aktif) !== '1') return base;
+  const pool = [base].concat(orSpinVariants(t));
+  return orSpinInline(pool[Math.floor(Math.random() * pool.length)]);
+}
+
+/* ---- Salin gambar ke clipboard (untuk ditempel di WhatsApp Web) ---- */
+function orDataUrlToPngBlob(dataUrl) {
+  return new Promise(function(resolve, reject) {
+    const im = new Image();
+    im.onload = function() {
+      const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
+      c.getContext('2d').drawImage(im, 0, 0);
+      c.toBlob(function(b) { b ? resolve(b) : reject(new Error('Gagal mengonversi gambar.')); }, 'image/png');
+    };
+    im.onerror = function() { reject(new Error('Gambar tidak dapat dibaca.')); };
+    im.src = dataUrl;
+  });
+}
+function orCopyImage(ref) {
+  orLoadImg(ref).then(function(src) {
+    if (!src) throw new Error('Gambar tidak ditemukan.');
+    if (!navigator.clipboard || !window.ClipboardItem) throw new Error('Browser ini tidak mendukung salin gambar. Gunakan tombol Unduh.');
+    return orDataUrlToPngBlob(src).then(function(blob) {
+      return navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    });
+  }).then(function() { toast('Gambar disalin. Di WhatsApp Web tekan Ctrl+V pada kolom chat, lalu kirim.'); })
+    .catch(function(e) { toast((e && e.message) || 'Gagal menyalin gambar.', 'error'); });
+}
+function orDownloadImage(ref) {
+  orLoadImg(ref).then(function(src) {
+    if (!src) { toast('Gambar tidak ditemukan.', 'error'); return; }
+    const a = document.createElement('a'); a.href = src; a.download = 'materi-' + ref.replace(/\D/g, '') + (src.indexOf('image/png') > 0 ? '.png' : '.jpg');
+    document.body.appendChild(a); a.click(); a.remove();
+  });
+}
+
+/* ---- Editor Materi (unggah gambar + spin teks) ---- */
+const TE = { editId: null, oldRef: '', ref: '', newDataUrl: '', newName: '', variants: [], spin: false };
+
+function teResizeFile(file) {
+  return new Promise(function(resolve, reject) {
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return reject(new Error('Gunakan gambar JPG, PNG, atau WebP.'));
+    const fr = new FileReader();
+    fr.onerror = function() { reject(new Error('Gagal membaca file.')); };
+    fr.onload = function() {
+      const im = new Image();
+      im.onerror = function() { reject(new Error('File bukan gambar yang valid.')); };
+      im.onload = function() {
+        let side = 1280, q = 0.85, out = '';
+        for (let n = 0; n < 8; n++) {
+          const sc = Math.min(1, side / Math.max(im.naturalWidth, im.naturalHeight));
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(im.naturalWidth * sc)); c.height = Math.max(1, Math.round(im.naturalHeight * sc));
+          const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(im, 0, 0, c.width, c.height);
+          out = c.toDataURL('image/jpeg', q);
+          if (out.length - 23 <= 400000) return resolve(out);
+          q = Math.max(0.5, q - 0.08); side = Math.round(side * 0.85);
+        }
+        reject(new Error('Gambar terlalu besar. Gunakan gambar yang lebih kecil.'));
+      };
+      im.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+function openTemplateEditor(row) {
+  const isEdit = !!row;
+  const v = function(k, d) { return isEdit && row[k] !== undefined && row[k] !== null && row[k] !== '' ? row[k] : d; };
+  TE.editId = isEdit ? row.materi_id : null;
+  TE.oldRef = isEdit && orIsRef(row.gambar_url) ? row.gambar_url : '';
+  TE.ref = isEdit && orIsRef(row.gambar_url) ? row.gambar_url : '';
+  TE.legacyUrl = isEdit && row.gambar_url && !orIsRef(row.gambar_url) ? String(row.gambar_url) : '';
+  TE.newDataUrl = ''; TE.newName = '';
+  TE.spin = isEdit && String(row.spin_aktif) === '1';
+  TE.variants = isEdit ? orSpinVariants({ spin_aktif: '1', spin_varian: row.spin_varian }) : [];
+  const segOpts = outreachSegmentOptions();
+  const tipe = v('tipe', 'TEKS'), seg = v('segmen', ''), st = v('status', 'AKTIF');
+  openModal({
+    title: (isEdit ? 'Edit' : 'Tambah') + ' Materi Outreach', wide: true, footer: null,
+    body:
+      '<div class="form-row"><div class="form-group"><label>Nama Materi <span style="color:var(--danger)">*</span></label><input class="form-control" id="teNama" maxlength="120" value="' + esc(v('nama_materi', '')) + '"></div>' +
+        '<div class="form-group"><label>Tipe Materi</label><select class="form-control" id="teTipe" onchange="teTipeChange()">' +
+          ['TEKS', 'GAMBAR + CAPTION'].map(function(o) { return '<option' + (o === tipe ? ' selected' : '') + '>' + o + '</option>'; }).join('') + '</select></div></div>' +
+      '<div class="form-row"><div class="form-group"><label>Cocok untuk Segmen</label><select class="form-control" id="teSeg"><option value="">— Semua / tidak ditentukan —</option>' +
+          segOpts.map(function(o) { return '<option value="' + esc(o.value) + '"' + (o.value === seg ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('') + '</select></div>' +
+        '<div class="form-group"><label>Status</label><select class="form-control" id="teStatus">' +
+          ['AKTIF', 'NONAKTIF'].map(function(o) { return '<option' + (o === st ? ' selected' : '') + '>' + o + '</option>'; }).join('') + '</select></div></div>' +
+      '<div class="form-group" id="teImgBox"><label>Gambar Materi <span style="color:var(--danger)">*</span></label>' +
+        '<div id="teImgPrev" style="margin-bottom:8px"></div>' +
+        '<input type="file" id="teFile" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="teFilePicked(this)">' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById(\'teFile\').click()">📤 Unggah Gambar</button>' +
+          '<button type="button" class="btn btn-outline btn-sm" id="teImgDel" onclick="teImgRemove()">🗑 Hapus Gambar</button></div>' +
+        '<div class="form-hint">Unggah langsung dari perangkat (JPG/PNG/WebP). Gambar otomatis diperkecil. Saat dikirim lewat program pengirim otomatis, gambar terkirim sebagai gambar + caption, bukan link.</div></div>' +
+      '<div class="form-group"><label>Isi Pesan / Caption <span style="color:var(--danger)">*</span></label>' +
+        '<textarea class="form-control" id="teIsi" rows="6" maxlength="1500">' + esc(v('isi_pesan', '')) + '</textarea>' +
+        '<div class="form-hint">Isian otomatis: {nama} = nama customer, {pic} = nama PIC, {campaign} = nama campaign.</div></div>' +
+      '<div class="card card-pad" style="background:#faf8ff;margin-bottom:12px">' +
+        '<label class="or-check" style="font-weight:700"><input type="checkbox" id="teSpin" onchange="teSpinToggle(this.checked)"' + (TE.spin ? ' checked' : '') + '> 🔀 Aktifkan Spin Teks</label>' +
+        '<div class="form-hint" style="margin:4px 0 8px">Setiap customer menerima redaksi yang berbeda (dipilih acak) supaya pesan tidak terlihat seperti spam massal. Pesan di atas dihitung sebagai variasi ke-1; tambahkan variasi lain di bawah (misal 10 variasi). ' +
+          'Anda juga bisa memakai pilihan di dalam kalimat: <b>{Halo|Hai|Selamat siang} {nama}</b> — salah satu dipilih acak.</div>' +
+        '<div id="teSpinBox"></div></div>' +
+      '<div class="form-hint" style="margin:0 0 6px">Pratinjau acak:</div><div class="or-preview" id="tePrev" style="margin-bottom:10px"></div>' +
+      '<div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap"><button type="button" class="btn btn-outline btn-sm" onclick="tePreview()">🔄 Acak pratinjau</button>' +
+        '<div style="display:flex;gap:8px"><button type="button" class="btn btn-outline" onclick="closeModal()">Batal</button>' +
+        '<button type="button" class="btn btn-primary" id="teSave" onclick="teSave()">💾 ' + (isEdit ? 'Simpan Perubahan' : 'Simpan') + '</button></div></div>'
+  });
+  teTipeChange(); teSpinRender(); tePreview(); teImgRender();
+}
+function teTipeChange() {
+  const t = document.getElementById('teTipe');
+  const box = document.getElementById('teImgBox');
+  if (t && box) box.style.display = t.value.indexOf('GAMBAR') === 0 ? '' : 'none';
+}
+function teImgRender() {
+  const host = document.getElementById('teImgPrev'); if (!host) return;
+  const st = 'max-width:100%;max-height:180px;border-radius:8px;display:block';
+  if (TE.newDataUrl) host.innerHTML = '<img src="' + TE.newDataUrl + '" style="' + st + '"><div class="or-sub">' + esc(TE.newName) + ' (belum disimpan)</div>';
+  else if (TE.ref) { host.innerHTML = orImgTag(TE.ref, st); orHydrateImgs(host); }
+  else if (TE.legacyUrl) host.innerHTML = '<div class="alert warn">Materi ini masih memakai link gambar lama. Unggah gambar agar terkirim sebagai gambar, bukan link.</div>';
+  else host.innerHTML = '<div class="or-sub">Belum ada gambar.</div>';
+  const del = document.getElementById('teImgDel'); if (del) del.style.display = (TE.newDataUrl || TE.ref || TE.legacyUrl) ? '' : 'none';
+}
+function teFilePicked(inp) {
+  const f = inp.files && inp.files[0]; if (!f) return;
+  showLoading('Memproses gambar...');
+  teResizeFile(f).then(function(d) { hideLoading(); TE.newDataUrl = d; TE.newName = f.name; teImgRender(); })
+    .catch(function(e) { hideLoading(); toast((e && e.message) || 'Gagal memproses gambar.', 'error'); });
+  inp.value = '';
+}
+function teImgRemove() { TE.newDataUrl = ''; TE.newName = ''; TE.ref = ''; TE.legacyUrl = ''; teImgRender(); }
+function teSpinToggle(on) { TE.spin = !!on; teSpinRender(); tePreview(); }
+function teSpinSync() {
+  const box = document.getElementById('teSpinBox'); if (!box) return;
+  TE.variants = Array.prototype.map.call(box.querySelectorAll('textarea'), function(x) { return x.value; });
+}
+function teSpinRender() {
+  const box = document.getElementById('teSpinBox'); if (!box) return;
+  if (!TE.spin) { box.innerHTML = '<div class="or-sub">Nonaktif — semua customer menerima pesan yang sama.</div>'; return; }
+  let h = '';
+  TE.variants.forEach(function(x, i) {
+    h += '<div style="display:flex;gap:6px;margin-bottom:6px;align-items:flex-start"><span class="badge b-violet" style="margin-top:8px">V' + (i + 2) + '</span>' +
+      '<textarea class="form-control" rows="3" maxlength="1500" style="flex:1" placeholder="Variasi pesan ' + (i + 2) + '">' + esc(x) + '</textarea>' +
+      '<button type="button" class="btn btn-outline btn-sm" onclick="teSpinDel(' + i + ')" title="Hapus variasi">✕</button></div>';
+  });
+  h += '<button type="button" class="btn btn-outline btn-sm" onclick="teSpinAdd()">＋ Tambah Variasi</button> <span class="or-sub">' + (TE.variants.length + 1) + ' variasi total (maks. 30)</span>';
+  box.innerHTML = h;
+}
+function teSpinAdd() { teSpinSync(); if (TE.variants.length >= 29) { toast('Maksimal 30 variasi.', 'error'); return; } TE.variants.push(''); teSpinRender(); }
+function teSpinDel(i) { teSpinSync(); TE.variants.splice(i, 1); teSpinRender(); }
+function tePreview() {
+  const host = document.getElementById('tePrev'); if (!host) return;
+  teSpinSync();
+  const t = { isi_pesan: (document.getElementById('teIsi') || {}).value || '', spin_aktif: TE.spin ? '1' : '0', spin_varian: JSON.stringify(TE.variants.filter(function(x) { return x.trim(); })) };
+  host.textContent = orBuildMessage(t, { nama: 'Budi' }, 'PIC', 'Campaign');
+}
+function teSave() {
+  teSpinSync();
+  const g = function(id) { return String((document.getElementById(id) || {}).value || '').trim(); };
+  const vals = { nama_materi: g('teNama'), tipe: g('teTipe'), segmen: g('teSeg'), status: g('teStatus'), isi_pesan: g('teIsi'),
+    spin_aktif: TE.spin ? '1' : '0', spin_varian: TE.spin ? JSON.stringify(TE.variants.map(function(x) { return x.trim(); }).filter(Boolean)) : '' };
+  if (!vals.nama_materi) { toast('Nama materi wajib diisi.', 'error'); return; }
+  if (!vals.isi_pesan) { toast('Isi pesan / caption wajib diisi.', 'error'); return; }
+  const isImg = vals.tipe.indexOf('GAMBAR') === 0;
+  if (isImg && !TE.newDataUrl && !TE.ref) { toast('Tipe GAMBAR + CAPTION wajib mengunggah gambar.', 'error'); return; }
+  showLoading('Menyimpan materi...');
+  const upload = (isImg && TE.newDataUrl) ? api('apiOutreachUploadImage', App.token, TE.newDataUrl, TE.newName).then(function(r) { return r.data.ref; }) : Promise.resolve(isImg ? TE.ref : '');
+  upload.then(function(ref) {
+    vals.gambar_url = ref;
+    return TE.editId ? api('apiUpdateRecord', App.token, 'outreachtpl', TE.editId, vals) : api('apiCreateRecords', App.token, 'outreachtpl', [vals]);
+  }).then(function(res) {
+    if (TE.oldRef && TE.oldRef !== vals.gambar_url) api('apiOutreachDeleteImage', App.token, TE.oldRef).catch(function() {});
+    hideLoading(); toast(res.message || 'Materi tersimpan.'); closeModal();
+    refreshLookups().then(function() { reloadGrid('outreachtpl'); });
+  }).catch(function(err) { hideLoading(); toast((err && err.message) || 'Gagal menyimpan materi.', 'error'); });
+}
+
+/* ---- Jadwal kirim otomatis ---- */
+function orLocalInputValue(ms) {
+  const d = new Date(ms); const p = function(n) { return String(n).padStart(2, '0'); };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function orFmtDT(ms) { return ms ? new Date(ms).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'; }
+function orFmtDur(sec) { sec = Math.round(sec); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60); return (h ? h + ' jam ' : '') + m + ' menit'; }
+
+function orOpenSchedule() {
+  const ids = OR.customers.filter(function(c) { return OR.sel[c.crm_id]; }).map(function(c) { return c.crm_id; });
+  if (!ids.length) { toast('Pilih minimal satu customer.', 'error'); return; }
+  const tpl = orTpl();
+  if (!tpl) { toast('Pilih materi pesan terlebih dahulu.', 'error'); return; }
+  if (!OR.actionPic) { toast('Pilih PIC yang menjalankan outreach.', 'error'); return; }
+  if (ids.length > 300) { toast('Maksimal 300 customer per jadwal.', 'error'); return; }
+  const spinInfo = String(tpl.spin_aktif) === '1' ? '🔀 Spin teks AKTIF (' + (orSpinVariants(tpl).length + 1) + ' variasi): tiap customer menerima redaksi acak.' : '⚠ Spin teks tidak aktif: semua customer menerima pesan identik. Aktifkan di menu Materi Outreach agar lebih aman.';
+  OR.sch = { ids: ids };
+  openModal({ title: '⏰ Jadwalkan Kirim Otomatis', wide: true, footer: null, body:
+    '<div class="alert info-state">Pesan dikirim otomatis oleh <b>program pengirim (wa-sender)</b> yang berjalan di PC kantor, satu per satu dengan jeda acak. PC harus menyala dan program aktif pada waktu yang dijadwalkan.</div>' +
+    '<p style="margin:8px 0"><b>' + ids.length + '</b> customer · materi <b>' + esc(tpl.nama_materi) + '</b>' + (orIsImage(tpl) ? ' (gambar + caption)' : '') + ' · PIC <b>' + esc(OR.actionPic) + '</b></p>' +
+    '<div class="' + (String(tpl.spin_aktif) === '1' ? 'or-sub' : 'form-error') + '" style="margin-bottom:10px">' + esc(spinInfo) + '</div>' +
+    '<div class="form-row"><div class="form-group"><label>Mulai kirim</label><input class="form-control" type="datetime-local" id="schStart" value="' + orLocalInputValue(Date.now() + 5 * 60000) + '" oninput="orSchEst()"></div>' +
+      '<div class="form-group"><label>Jeda antar pesan: minimal (detik)</label><input class="form-control" type="number" id="schMin" min="15" max="3600" value="60" oninput="orSchEst()"></div>' +
+      '<div class="form-group"><label>maksimal (detik)</label><input class="form-control" type="number" id="schMax" min="15" max="3600" value="150" oninput="orSchEst()"></div></div>' +
+    '<div class="form-hint" id="schEst" style="margin-bottom:10px"></div>' +
+    '<div class="form-hint">Saran: jeda 60–180 detik, maksimal sekitar 30–50 pesan per hari per nomor, gunakan nomor WhatsApp khusus bisnis, dan jangan kirim ke customer yang belum pernah berinteraksi dalam jumlah besar. Tidak ada kirim otomatis yang 100% bebas risiko pemblokiran.</div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn btn-outline" onclick="closeModal()">Batal</button>' +
+      '<button class="btn btn-primary" id="schGo" onclick="orSchGo()">⏰ Jadwalkan</button></div>' });
+  orSchEst();
+}
+function orSchEst() {
+  const n = OR.sch.ids.length;
+  const mn = Math.max(15, Number((document.getElementById('schMin') || {}).value) || 60);
+  const mx = Math.max(mn, Number((document.getElementById('schMax') || {}).value) || 150);
+  const st = new Date((document.getElementById('schStart') || {}).value).getTime();
+  const el = document.getElementById('schEst'); if (!el) return;
+  const avg = (mn + mx) / 2 * Math.max(0, n - 1);
+  el.textContent = 'Perkiraan durasi ' + orFmtDur(avg) + (isNaN(st) ? '' : ' · selesai sekitar ' + orFmtDT(st + avg * 1000));
+}
+function orSchGo() {
+  const tpl = orTpl(); const ids = OR.sch.ids;
+  const st = new Date(document.getElementById('schStart').value).getTime();
+  if (isNaN(st)) { toast('Waktu mulai tidak valid.', 'error'); return; }
+  const mn = Math.max(15, Number(document.getElementById('schMin').value) || 60);
+  const mx = Math.max(mn, Number(document.getElementById('schMax').value) || 150);
+  const items = ids.map(function(id) { return { crm_id: id, pesan: orBuildMessage(tpl, OR.byId[id], OR.actionPic, orCampaignName()) }; });
+  const btn = document.getElementById('schGo'); if (btn) btn.disabled = true;
+  api('apiOutreachScheduleBatch', App.token, { items: items, materi_id: tpl.materi_id, PIC: OR.actionPic, campaign_id: OR.campaignId, campaign: orCampaignName(), start_ms: st, jeda_min: mn, jeda_max: mx })
+    .then(function(res) {
+      toast(res.message || 'Terjadwal.'); closeModal();
+      OR.sel = {}; orRenderTable(); orRenderBar();
+      orSetTab('jadwal');
+    }).catch(function(e) { if (btn) btn.disabled = false; toast((e && e.message) || 'Gagal menjadwalkan.', 'error'); });
+}
+
+/* ---- Tab: Terjadwal ---- */
+function orQBadge(s) { return s === 'TERKIRIM' ? 'b-green' : s === 'GAGAL' ? 'b-red' : s === 'MENUNGGU' || s === 'MENGIRIM' ? 'b-amber' : 'b-gray'; }
+function orRenderJadwal() {
+  const host = document.getElementById('orBody'); if (!host) return;
+  if (!OR.jq) host.innerHTML = '<div class="grid-empty">Memuat jadwal...</div>';
+  api('apiOutreachQueueList', App.token).then(function(res) {
+    if (OR.tab !== 'jadwal') return;
+    OR.jq = res.data; orDrawJadwal();
+  }).catch(function(e) { if (OR.tab === 'jadwal') host.innerHTML = '<div class="form-error">' + esc((e && e.message) || 'Gagal memuat jadwal.') + '</div>'; });
+  clearTimeout(OR.jTimer);
+  OR.jTimer = setTimeout(function() { if (OR.tab === 'jadwal' && document.getElementById('orBody')) orRenderJadwal(); }, 15000);
+}
+function orDrawJadwal() {
+  const host = document.getElementById('orBody'); const d = OR.jq; if (!host || !d) return;
+  const c = d.counts;
+  const age = d.sender ? (d.now - d.sender.at) / 1000 : null;
+  const live = age !== null && age < 120;
+  let h = '<div class="alert ' + (live ? 'info-state' : 'warn') + '" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><div>' +
+    (live ? '🟢 Program pengirim aktif (terakhir terdeteksi ' + Math.round(age) + ' detik lalu)' : '🔴 Program pengirim di PC belum terdeteksi' + (age !== null ? ' (terakhir ' + orFmtDur(age) + ' lalu)' : '') + ' — pesan terjadwal tidak akan terkirim sebelum wa-sender dijalankan.') + '</div>' +
+    (orIsManager() ? '<button class="btn btn-outline btn-sm" onclick="orShowSenderKey()">🔑 Kunci Pengirim</button>' : '') + '</div>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">' + ['MENUNGGU', 'MENGIRIM', 'TERKIRIM', 'GAGAL', 'DIBATALKAN'].map(function(s) {
+    return '<span class="badge ' + orQBadge(s) + '" style="padding:6px 10px">' + s + ': <b>' + c[s] + '</b></span>'; }).join('') +
+    (c.MENUNGGU ? '<button class="btn btn-outline btn-sm" onclick="orQCancelAll()">⛔ Batalkan semua yang menunggu</button>' : '') +
+    (c.GAGAL ? '<button class="btn btn-outline btn-sm" onclick="orQRetryAll()">↻ Coba ulang yang gagal</button>' : '') +
+    '<button class="btn btn-outline btn-sm" onclick="OR.jq=null;orRenderJadwal()">⟳ Muat ulang</button></div>';
+  if (!d.rows.length) h += '<div class="card"><div class="grid-empty">Belum ada pesan terjadwal. Pilih customer di tab 1 lalu klik “⏰ Jadwalkan Kirim Otomatis”.</div></div>';
+  else {
+    h += '<div class="card"><div class="grid-table-wrap"><table class="grid-table"><thead><tr><th>Waktu Kirim</th><th>Customer</th><th>WhatsApp</th><th>PIC</th><th>Pesan</th><th>Status</th><th></th></tr></thead><tbody>';
+    d.rows.forEach(function(r) {
+      h += '<tr><td>' + orFmtDT(r.status === 'TERKIRIM' ? (r.dikirim_ms || r.kirim_ms) : r.kirim_ms) + '</td><td>' + esc(r.nama) + '<div class="or-sub">' + esc(r.crm_id) + '</div></td><td>' + esc(r.whatsapp) + '</td><td>' + esc(r.PIC) + '</td>' +
+        '<td style="max-width:260px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px" title="' + esc(r.pesan) + '">' + (r.has_image ? '🖼 ' : '') + esc(r.pesan) + '</div></td>' +
+        '<td><span class="badge ' + orQBadge(r.status) + '">' + esc(r.status) + '</span>' + (r.error ? '<div class="or-sub" style="color:var(--danger)">' + esc(r.error) + '</div>' : '') + '</td>' +
+        '<td>' + (r.status === 'MENUNGGU' ? '<button class="btn btn-outline btn-sm" onclick="orQAct(\'cancel\',\'' + esc(r.queue_id) + '\')">Batalkan</button>' :
+          (r.status === 'GAGAL' || r.status === 'DIBATALKAN') ? '<button class="btn btn-outline btn-sm" onclick="orQAct(\'retry\',\'' + esc(r.queue_id) + '\')">Jadwalkan ulang</button>' : '') + '</td></tr>';
+    });
+    h += '</tbody></table></div></div>' + (d.truncated ? '<div class="form-hint">Menampilkan 500 pesan terbaru.</div>' : '');
+  }
+  host.innerHTML = h;
+}
+function orQAct(action, queueId) {
+  api('apiOutreachQueueAction', App.token, action, { queue_id: queueId }).then(function(r) { toast(r.message || 'Diperbarui.'); OR.jq = null; orRenderJadwal(); orRefreshOverviewSoon && orRefreshOverviewSoon(); })
+    .catch(function(e) { toast((e && e.message) || 'Gagal.', 'error'); });
+}
+function orQBatchAct(action, statuses) {
+  const ids = {};
+  (OR.jq ? OR.jq.rows : []).forEach(function(r) { if (statuses.indexOf(r.status) >= 0) ids[r.batch_id] = 1; });
+  const list = Object.keys(ids);
+  if (!list.length) return;
+  showLoading('Memproses...');
+  list.reduce(function(p, b) { return p.then(function() { return api('apiOutreachQueueAction', App.token, action, { batch_id: b }).catch(function() {}); }); }, Promise.resolve())
+    .then(function() { hideLoading(); toast('Selesai.'); OR.jq = null; orRenderJadwal(); });
+}
+function orQCancelAll() { openConfirm('Batalkan semua pesan yang masih menunggu?', function() { orQBatchAct('cancel', ['MENUNGGU']); }, 'Batalkan'); }
+function orQRetryAll() { orQBatchAct('retry', ['GAGAL']); }
+function orShowSenderKey() {
+  api('apiOutreachSenderKey', App.token, false).then(function(r) {
+    openModal({ title: '🔑 Kunci Program Pengirim', footer: null, body:
+      '<p style="font-size:13px">Tempel kunci ini ke file <b>.env</b> program wa-sender (baris <b>SENDER_KEY=</b>). Jaga kerahasiaannya — siapa pun yang memegang kunci dapat mengambil antrean pesan.</p>' +
+      '<input class="form-control" readonly id="skVal" value="' + esc(r.data.key) + '" onclick="this.select()">' +
+      '<div style="display:flex;gap:8px;justify-content:space-between;margin-top:12px"><button class="btn btn-outline btn-sm" onclick="orResetSenderKey()">♻ Buat kunci baru</button>' +
+      '<button class="btn btn-primary" onclick="navigator.clipboard&&navigator.clipboard.writeText(document.getElementById(\'skVal\').value);toast(\'Kunci disalin.\')">Salin</button></div>' });
+  }).catch(function(e) { toast((e && e.message) || 'Gagal.', 'error'); });
+}
+function orResetSenderKey() {
+  openConfirm('Buat kunci baru? Kunci lama langsung tidak berlaku dan wa-sender harus diperbarui.', function() {
+    api('apiOutreachSenderKey', App.token, true).then(function() { orShowSenderKey(); }).catch(function(e) { toast((e && e.message) || 'Gagal.', 'error'); });
+  }, 'Buat Baru');
 }
 
 /* ==================== EDITOR DATA GRID (menggantikan form modal) ==================== */
@@ -5591,6 +5937,184 @@ async function renderDashboard() {
 
 /* ==================== REPORTS PAGE ==================== */
 let REP_TAB = 'wa';
+/* ==================== TANYA AI (Hermes Agent lokal) ====================
+ * Halaman chat untuk bertanya tentang data WMC. Browser -> bridge lokal (http://127.0.0.1:8765) -> Hermes Agent di PC ini.
+ * Bridge membaca data WMC memakai token login pengguna ini (read-only) lalu meneruskan pertanyaan ke Hermes.
+ */
+const AI_DEFAULT_URL = 'http://127.0.0.1:8765';
+const AI_SUGGESTIONS = [
+  'Siapa saja pelanggan yang berulang tahun bulan ini?',
+  'Berapa total leads, dan berapa yang sudah menjadi reservasi?',
+  'Sumber leads mana yang paling banyak menghasilkan reservasi?',
+  'Ringkas performa marketing bulan ini',
+  'Follow-up apa yang jatuh tempo hari ini atau sudah lewat?',
+  'Event mana yang pesertanya belum lunas?',
+  'Siapa pelanggan VIP yang sudah lama tidak berkunjung?'
+];
+const AI = { history: [], busy: false, online: null };
+
+function aiUrl_() {
+  try { return (localStorage.getItem('wmc_ai_url') || AI_DEFAULT_URL).replace(/\/+$/, ''); } catch (e) { return AI_DEFAULT_URL; }
+}
+function aiMd_(text) {   // markdown sederhana -> HTML aman (selalu di-escape dulu)
+  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  const inline = function(s) {
+    return esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  };
+  let html = '', list = null, i = 0;
+  const closeList = function() { if (list) { html += '</' + list + '>'; list = null; } };
+  while (i < lines.length) {
+    const ln = lines[i];
+    if (/^```/.test(ln)) {
+      closeList();
+      let code = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) { code.push(lines[i]); i++; }
+      i++;
+      html += '<pre class="ai-code">' + esc(code.join('\n')) + '</pre>';
+      continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(ln) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1])) {
+      closeList();
+      const cells = function(l) { return l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function(c) { return c.trim(); }); };
+      const head = cells(ln); i += 2;
+      html += '<div class="ai-tbl"><table class="table-plain"><thead><tr>' + head.map(function(h) { return '<th>' + inline(h) + '</th>'; }).join('') + '</tr></thead><tbody>';
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+        html += '<tr>' + cells(lines[i]).map(function(c) { return '<td>' + inline(c) + '</td>'; }).join('') + '</tr>'; i++;
+      }
+      html += '</tbody></table></div>';
+      continue;
+    }
+    let m;
+    if ((m = ln.match(/^\s*#{1,4}\s+(.*)$/))) { closeList(); html += '<div class="ai-h">' + inline(m[1]) + '</div>'; }
+    else if ((m = ln.match(/^\s*[-*•]\s+(.*)$/))) { if (list !== 'ul') { closeList(); html += '<ul>'; list = 'ul'; } html += '<li>' + inline(m[1]) + '</li>'; }
+    else if ((m = ln.match(/^\s*\d+[.)]\s+(.*)$/))) { if (list !== 'ol') { closeList(); html += '<ol>'; list = 'ol'; } html += '<li>' + inline(m[1]) + '</li>'; }
+    else if (!ln.trim()) { closeList(); }
+    else { closeList(); html += '<p>' + inline(ln) + '</p>'; }
+    i++;
+  }
+  closeList();
+  return html;
+}
+
+function renderAskAiPage() {
+  const container = document.getElementById('pageContainer');
+  setPageTitle('Tanya AI');
+  container.innerHTML =
+    '<div class="page-head"><div><h2>🤖 Tanya AI</h2><p>Tanyakan apa saja tentang data WMC dalam bahasa sehari-hari. Dijawab oleh Hermes Agent yang berjalan di PC ini.</p></div></div>' +
+    '<div class="card card-pad ai-status" id="aiStatus"></div>' +
+    '<div class="card ai-wrap">' +
+      '<div class="ai-chat" id="aiChat"></div>' +
+      '<div class="ai-input">' +
+        '<textarea class="form-control" id="aiQ" rows="2" maxlength="2000" placeholder="Tulis pertanyaan… (Enter = kirim, Shift+Enter = baris baru)"></textarea>' +
+        '<div class="ai-actions">' +
+          '<label class="ai-chk" title="Ambil ulang data dari WMC (bila tidak dicentang, data yang sama dipakai maksimal 2 menit)"><input type="checkbox" id="aiRefresh"> Data terbaru</label>' +
+          '<button class="btn btn-outline btn-sm" id="aiClear">🗑 Hapus percakapan</button>' +
+          '<button class="btn btn-primary" id="aiSend">Kirim ➤</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  aiRenderChat_();
+  aiCheck_();
+  document.getElementById('aiSend').onclick = aiSend_;
+  document.getElementById('aiClear').onclick = function() { AI.history = []; aiRenderChat_(); };
+  document.getElementById('aiQ').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiSend_(); }
+  });
+}
+
+function aiRenderStatus_() {
+  const host = document.getElementById('aiStatus');
+  if (!host) return;
+  const o = AI.online;
+  let dot, txt;
+  if (o === null) { dot = 'ai-dot'; txt = 'Memeriksa koneksi…'; }
+  else if (o.bridge && o.hermes) { dot = 'ai-dot on'; txt = 'Terhubung — bridge &amp; Hermes siap'; }
+  else if (o.bridge) { dot = 'ai-dot warn'; txt = 'Bridge aktif, tetapi Hermes belum berjalan. Jalankan <code>hermes gateway run</code> di PowerShell.'; }
+  else { dot = 'ai-dot off'; txt = 'Bridge AI belum berjalan di PC ini. Jalankan <code>start-ai-bridge.bat</code> (folder ai-bridge). Menu ini hanya berfungsi di PC tempat Hermes terpasang.'; }
+  host.innerHTML = '<div class="ai-st-row"><span class="' + dot + '"></span><span class="ai-st-txt">' + txt + '</span>' +
+    '<span class="ai-st-btns"><button class="btn btn-outline btn-sm" id="aiRecheck">⟳ Cek</button>' +
+    '<button class="btn btn-outline btn-sm" id="aiCfg" title="Alamat bridge: ' + esc(aiUrl_()) + '">⚙</button></span></div>';
+  document.getElementById('aiRecheck').onclick = aiCheck_;
+  document.getElementById('aiCfg').onclick = function() {
+    const v = prompt('Alamat bridge AI (biasanya http://127.0.0.1:8765):', aiUrl_());
+    if (v === null) return;
+    try { localStorage.setItem('wmc_ai_url', String(v).trim() || AI_DEFAULT_URL); } catch (e) { /* abaikan */ }
+    aiCheck_();
+  };
+}
+async function aiCheck_() {
+  AI.online = null; aiRenderStatus_();
+  try {
+    const r = await fetch(aiUrl_() + '/health', { signal: AbortSignal.timeout(4000) });
+    AI.online = await r.json();
+  } catch (e) { AI.online = { bridge: false, hermes: false }; }
+  aiRenderStatus_();
+}
+
+function aiRenderChat_() {
+  const box = document.getElementById('aiChat');
+  if (!box) return;
+  if (!AI.history.length) {
+    box.innerHTML = '<div class="ai-empty"><div style="font-size:34px">🤖</div><b>Mau tanya apa tentang data WMC?</b>' +
+      '<div class="ai-sub">Coba salah satu contoh ini:</div><div class="ai-chips">' +
+      AI_SUGGESTIONS.map(function(s, i) { return '<button class="ai-chip" data-i="' + i + '">' + esc(s) + '</button>'; }).join('') + '</div>' +
+      '<div class="ai-note">AI hanya membaca data (tidak mengubah apa pun) dan mengikuti hak akses akun Anda.</div></div>';
+    box.querySelectorAll('.ai-chip').forEach(function(b) {
+      b.onclick = function() { document.getElementById('aiQ').value = AI_SUGGESTIONS[Number(b.getAttribute('data-i'))]; aiSend_(); };
+    });
+    return;
+  }
+  box.innerHTML = AI.history.map(function(m) {
+    if (m.role === 'user') return '<div class="ai-msg user"><div class="ai-bub">' + esc(m.content).replace(/\n/g, '<br>') + '</div></div>';
+    let meta = '';
+    if (m.meta) {
+      const mods = Object.keys(m.meta.modules || {}).map(function(k) { const x = m.meta.modules[k]; return k + ' ' + x.sent + (x.sent < x.rows ? '/' + x.rows : ''); }).join(' · ');
+      meta = '<div class="ai-meta">Data per ' + new Date(m.meta.asOf).toLocaleTimeString('id-ID') + ' · ' + (m.meta.ms / 1000).toFixed(1) + ' dtk' +
+        (m.meta.truncated ? ' · <b style="color:#b45309">sebagian baris lama tidak ikut dibaca</b>' : '') +
+        '<span class="ai-meta-d" title="' + esc(mods) + '"> ⓘ</span></div>';
+    }
+    return '<div class="ai-msg bot"><div class="ai-av">🤖</div><div class="ai-bub ' + (m.error ? 'err' : '') + '">' + (m.error ? esc(m.content) : aiMd_(m.content)) + meta + '</div></div>';
+  }).join('') + (AI.busy ? '<div class="ai-msg bot"><div class="ai-av">🤖</div><div class="ai-bub"><span class="ai-typing"><i></i><i></i><i></i></span> <span style="color:var(--muted);font-size:12px">membaca data & berpikir… (bisa 10–60 detik)</span></div></div>' : '');
+  box.scrollTop = box.scrollHeight;
+}
+
+async function aiSend_() {
+  if (AI.busy) return;
+  const qEl = document.getElementById('aiQ');
+  const q = (qEl.value || '').trim();
+  if (!q) return;
+  qEl.value = '';
+  const refresh = document.getElementById('aiRefresh').checked;
+  const hist = AI.history.filter(function(m) { return !m.error; }).slice(-8).map(function(m) { return { role: m.role, content: m.content }; });
+  AI.history.push({ role: 'user', content: q });
+  AI.busy = true; aiRenderChat_();
+  document.getElementById('aiSend').disabled = true;
+  const ctrl = new AbortController();
+  const timer = setTimeout(function() { ctrl.abort(); }, 290000);
+  try {
+    const r = await fetch(aiUrl_() + '/ask', {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', 'X-WMC-AI': '1' },
+      body: JSON.stringify({ question: q, token: App.token, history: hist, refresh: refresh })
+    });
+    const j = await r.json();
+    if (r.status === 401) { forceLogout('Sesi berakhir. Silakan login kembali.'); return; }
+    if (!j.success) AI.history.push({ role: 'assistant', content: j.message || 'Gagal mendapat jawaban.', error: true });
+    else { AI.history.push({ role: 'assistant', content: j.answer, meta: j.meta }); document.getElementById('aiRefresh').checked = false; }
+  } catch (e) {
+    const msg = e && e.name === 'AbortError' ? 'Terlalu lama menunggu jawaban. Coba pertanyaan yang lebih spesifik.' :
+      'Tidak terhubung ke bridge AI di ' + aiUrl_() + '. Pastikan bridge berjalan di PC ini (start-ai-bridge.bat). Bila Chrome menampilkan izin "akses jaringan lokal", pilih Izinkan.';
+    AI.history.push({ role: 'assistant', content: msg, error: true });
+    aiCheck_();
+  } finally {
+    clearTimeout(timer);
+    AI.busy = false;
+    const s = document.getElementById('aiSend'); if (s) s.disabled = false;
+    aiRenderChat_();
+    const q2 = document.getElementById('aiQ'); if (q2) q2.focus();
+  }
+}
+
 function renderReportsPage() {
   const container = document.getElementById('pageContainer');
   setPageTitle('Laporan');
@@ -5940,7 +6464,7 @@ function orImageUrl(url) {
   return m ? 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w800' : url;
 }
 function orBuildMessage(t, c, pic, campaign) {
-  return String(t.isi_pesan || '')
+  return orSpinPick(t)
     .replace(/\{nama\}/gi, function() { return c.nama || ''; })
     .replace(/\{pic\}/gi, function() { return pic || ''; })
     .replace(/\{campaign\}/gi, function() { return campaign || ''; });
@@ -6074,19 +6598,20 @@ function orRenderStats() {
 function orRenderTabs() {
   const host = document.getElementById('orTabs');
   if (!host) return;
-  const tabs = [{ k: 'pilih', l: '1 · Pilih Customer' }, { k: 'log', l: '2 · Log Aktivitas' }];
+  const tabs = [{ k: 'pilih', l: '1 · Pilih Customer' }, { k: 'jadwal', l: '⏰ Terjadwal' }, { k: 'log', l: '2 · Log Aktivitas' }];
   if (orIsManager()) tabs.push({ k: 'perf', l: 'Performa PIC' });
   host.innerHTML = '<div class="or-tabs">' + tabs.map(function(t) {
     return '<button class="or-tab' + (OR.tab === t.k ? ' active' : '') + '" onclick="orSetTab(\'' + t.k + '\')">' + t.l + '</button>';
   }).join('') + '</div>';
 }
 function orSetTab(k) {
-  OR.tab = k;
+  OR.tab = k; clearTimeout(OR.jTimer);
   orRenderTabs();
   orRenderBody();
 }
 function orRenderBody() {
   if (OR.tab === 'log') orRenderLogs();
+  else if (OR.tab === 'jadwal') orRenderJadwal();
   else if (OR.tab === 'perf') orRenderPerf();
   else orRenderPilih();
 }
@@ -6188,11 +6713,9 @@ function orRenderPreview() {
   const firstId = Object.keys(OR.sel)[0];
   const sample = firstId && OR.byId[firstId] ? OR.byId[firstId] : { nama: '[Nama Customer]' };
   let h = '';
-  if (orIsImage(t) && t.gambar_url) {
-    h += '<img src="' + esc(orImageUrl(t.gambar_url)) + '" alt="Materi" referrerpolicy="no-referrer" ' +
-      'style="max-width:100%;max-height:130px;border-radius:8px;display:block;margin-bottom:8px" onerror="this.style.display=\'none\'">';
-  }
+  if (orIsImage(t) && t.gambar_url) h += orImgTag(t.gambar_url, 'max-width:100%;max-height:130px;border-radius:8px;display:block;margin-bottom:8px');
   host.innerHTML = h + esc(orBuildMessage(t, sample, OR.actionPic, orCampaignName()));
+  orHydrateImgs(host);
 }
 
 function orRenderBar() {
@@ -6208,7 +6731,8 @@ function orRenderBar() {
     '<div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">' +
       '<button class="btn btn-outline btn-sm" onclick="orSelectToTarget()">🎯 Pilih sampai target</button>' +
       '<button class="btn btn-outline btn-sm" onclick="orClearSel()"' + (n ? '' : ' disabled') + '>Kosongkan</button>' +
-      '<button class="btn btn-wa" onclick="orStartQueue()"' + (n ? '' : ' disabled') + '>▶ Mulai Outreach (' + n + ')</button>' +
+      '<button class="btn btn-outline" onclick="orOpenSchedule()"' + (n ? '' : ' disabled') + '>⏰ Jadwalkan Kirim Otomatis (' + n + ')</button>' +
+      '<button class="btn btn-wa" onclick="orStartQueue()"' + (n ? '' : ' disabled') + '>▶ Mulai Outreach Manual (' + n + ')</button>' +
     '</div>';
 }
 
@@ -6321,7 +6845,7 @@ function orStartQueue() {
 function orQueueDefaultMsg(c) {
   const q = OR.queue;
   let m = orBuildMessage(q.tpl, c, q.pic, q.campaign);
-  if (q.includeLink && orIsImage(q.tpl) && q.tpl.gambar_url) m += '\n\n' + q.tpl.gambar_url;
+  if (q.includeLink && orIsImage(q.tpl) && q.tpl.gambar_url && !orIsRef(q.tpl.gambar_url)) m += '\n\n' + q.tpl.gambar_url;
   return m;
 }
 function orQueueRender() {
@@ -6343,7 +6867,8 @@ function orQueueRender() {
   }
   const c = OR.byId[q.ids[q.i]];
   const logged = q.logged[c.crm_id];
-  const msg = q.msgs[c.crm_id] !== undefined ? q.msgs[c.crm_id] : orQueueDefaultMsg(c);
+  if (q.msgs[c.crm_id] === undefined) q.msgs[c.crm_id] = orQueueDefaultMsg(c);
+  const msg = q.msgs[c.crm_id];
   const isImg = orIsImage(q.tpl);
   const last = q.i === total - 1;
   let h =
@@ -6354,11 +6879,14 @@ function orQueueRender() {
       '<div class="or-sub" style="margin-top:3px">' + esc(c.whatsapp) + ' · ' + esc(c.jenis_pelanggan || '—') +
       (c.segments.length ? ' · ' + c.segments.slice(0, 3).map(function(s) { return esc(orSegLabel(s)); }).join(', ') : '') + '</div></div>';
   if (isImg) {
+    const gu = q.tpl.gambar_url, isRef = orIsRef(gu);
     h += '<div class="alert info-state" style="align-items:center;gap:12px">' +
-      (q.tpl.gambar_url ? '<img src="' + esc(orImageUrl(q.tpl.gambar_url)) + '" alt="Materi" referrerpolicy="no-referrer" style="width:72px;height:72px;object-fit:cover;border-radius:8px;flex:none" onerror="this.style.display=\'none\'">' : '') +
-      '<div>🖼 Materi bergambar: WhatsApp Web hanya menerima teks otomatis, jadi <b>lampirkan gambar secara manual</b> (tombol 📎) setelah chat terbuka. Teks di bawah menjadi caption-nya.' +
-      (q.tpl.gambar_url ? ' <a href="' + esc(q.tpl.gambar_url) + '" target="_blank" rel="noopener">Buka gambar ↗</a>' : '') +
-      (q.tpl.gambar_url ? '<label class="or-check" style="margin-top:6px"><input type="checkbox" onchange="orQueueToggleLink(this.checked)"' + (q.includeLink ? ' checked' : '') + '> Sertakan link gambar di dalam pesan</label>' : '') +
+      (gu ? orImgTag(gu, 'width:72px;height:72px;object-fit:cover;border-radius:8px;flex:none') : '') +
+      '<div>🖼 Materi bergambar: WhatsApp Web hanya menerima teks otomatis. ' + (isRef
+        ? 'Klik <b>📋 Salin gambar</b>, buka chat, tempel dengan <b>Ctrl+V</b> di kolom chat, lalu tempel/ketik caption dan kirim. Atau gunakan <b>⏰ Jadwalkan Kirim Otomatis</b> agar gambar terkirim otomatis.' +
+          '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button class="btn btn-outline btn-sm" onclick="orCopyImage(\'' + esc(gu) + '\')">📋 Salin gambar</button><button class="btn btn-outline btn-sm" onclick="orDownloadImage(\'' + esc(gu) + '\')">⬇ Unduh</button></div>'
+        : '<b>lampirkan gambar secara manual</b> (tombol 📎). Teks di bawah menjadi caption-nya.' + (gu ? ' <a href="' + esc(gu) + '" target="_blank" rel="noopener">Buka gambar ↗</a>' : '') +
+          (gu ? '<label class="or-check" style="margin-top:6px"><input type="checkbox" onchange="orQueueToggleLink(this.checked)"' + (q.includeLink ? ' checked' : '') + '> Sertakan link gambar di dalam pesan</label>' : '')) +
       '</div></div>';
   }
   h += '<div class="form-group"><label>Pesan (boleh disunting sebelum dibuka)</label>' +
@@ -6375,6 +6903,7 @@ function orQueueRender() {
       '<button class="btn btn-wa" onclick="orQueueOpenWA()"' + (q.busy ? ' disabled' : '') + '>' + (q.busy ? '⏳ Mencatat...' : '🟢 Buka WhatsApp Web &amp; Catat') + '</button></div>';
   }
   host.innerHTML = h;
+  orHydrateImgs(host);
 }
 function orQueueMsgInput(v) {
   const q = OR.queue;
@@ -6766,6 +7295,7 @@ function lbSerialize() {
 }
 function lbPublicUrl(slug) {
   slug = String(slug || '').trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-]/g, '') || '<slug>';
+  if (App.landingBase && /^https?:\/\/[^\/]+\.github\.io(\/|$)/i.test(App.landingBase)) return App.landingBase + '/public.html?page=' + slug;
   if (App.landingBase) return App.landingBase + '/' + slug;
   return (App.landingExec || '') + '?page=' + slug;
 }
@@ -6925,7 +7455,7 @@ function lbSave() {
 function renderLandingSettings(d) {
   App.landingBase = d.base_url || ''; App.landingExec = d.exec_url || '';
   return '<div class="card card-pad" style="margin-bottom:16px"><div class="card-title"><span class="dot"></span>Alamat Publik (link yang dilihat customer)</div>' +
-    '<div class="form-hint" style="margin-bottom:8px">Bawaan: link Google Apps Script. Bila Anda punya domain sendiri (mis. <b>promo.namaanda.com</b>), isi di sini agar link yang dibagikan tampil rapi: <b>alamat/slug</b>. Domain harus disambungkan lewat panduan di tombol sebelah.</div>' +
+    '<div class="form-hint" style="margin-bottom:8px">Bawaan: link Google Apps Script. Bila halaman publik dipasang di <b>GitHub Pages</b>, isi dengan alamat repo saja, mis. <b>https://wlpsamarinda.github.io/marketing</b> (tanpa index.html) — link menjadi <b>.../public.html?page=&lt;slug&gt;</b>. Untuk domain sendiri (mis. <b>promo.namaanda.com</b>) link menjadi <b>alamat/slug</b>; domain disambungkan lewat panduan di tombol sebelah.</div>' +
     '<div class="lb-base"><input class="form-control" id="lpBase" placeholder="https://promo.namaanda.com  (kosongkan = link bawaan)" value="' + esc(App.landingBase) + '">' +
     '<button class="btn btn-primary" onclick="lpSaveBase()">Simpan</button>' +
     '<button class="btn btn-outline" onclick="lpShowGuide()">📘 Panduan &amp; Kode Proxy</button></div>' +
@@ -6936,6 +7466,7 @@ function lpSaveBase() {
   showLoading('Menyimpan...');
   api('apiLandingSaveSettings', App.token, v).then(function(res) {
     hideLoading(); toast(res.message || 'Tersimpan.'); App.landingBase = res.data.base_url || '';
+    const inp = document.getElementById('lpBase'); if (inp) inp.value = App.landingBase;
     reloadGrid('landingpages');
   }).catch(function(err) { hideLoading(); toast((err && err.message) || 'Gagal menyimpan.', 'error'); });
 }
@@ -6986,6 +7517,7 @@ const ROUTES = [
   { key: 'participants', title: 'Peserta Event',  icon: '🙋', section: 'Operasional', roles: ALL_ROLES, render: function() { renderModulePage('participants'); } },
   { key: 'vouchers',     title: 'Voucher',        icon: '🎟️', section: 'Operasional', roles: ALL_ROLES, render: function() { renderModulePage('vouchers'); } },
   { key: 'costs',        title: 'Biaya Marketing', icon: '💸', section: 'Operasional', roles: ALL_ROLES, render: function() { renderModulePage('costs'); } },
+  { key: 'askai',        title: 'Tanya AI',       icon: '🤖', section: 'Analisis',  roles: ALL_ROLES, render: renderAskAiPage },
   { key: 'reports',      title: 'Laporan',        icon: '📑', section: 'Analisis',  roles: ['ADMIN','MANAGER'], render: renderReportsPage },
   { key: 'pengaturan',   title: 'Pengaturan',     icon: '⚙️', section: 'Sistem', roles: ['ADMIN','MANAGER'], render: renderSettingsPage }
 ];
