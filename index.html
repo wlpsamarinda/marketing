@@ -6090,7 +6090,7 @@ async function aiSend_() {
   AI.busy = true; aiRenderChat_();
   document.getElementById('aiSend').disabled = true;
   const ctrl = new AbortController();
-  const timer = setTimeout(function() { ctrl.abort(); }, 290000);
+  const timer = setTimeout(function() { ctrl.abort(); }, 620000);
   try {
     const r = await fetch(aiUrl_() + '/ask', {
       method: 'POST', signal: ctrl.signal,
