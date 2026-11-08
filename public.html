@@ -84,6 +84,18 @@ textarea.form-control{resize:vertical;min-height:80px}
 .toast{background:#111827;color:#fff;padding:11px 16px;border-radius:11px;font-size:13px;box-shadow:var(--shadow-lg);max-width:320px}
 .toast.error{background:var(--danger)}
 @media(max-width:600px){.hero h1{font-size:22px}.card{padding:18px}}
+
+.soc{margin-top:18px;padding-top:16px;border-top:1px dashed var(--border);text-align:center}
+.soc-t{font-size:13px;color:var(--muted);margin-bottom:10px;font-weight:600}
+.soc-row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.soc-btn{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:12px;color:#fff;text-decoration:none;font-weight:700;font-size:14px;box-shadow:var(--shadow)}
+.soc-btn:active{transform:scale(.97)}
+.soc-instagram{background:linear-gradient(45deg,#f09433,#dc2743 55%,#bc1888)}
+.soc-tiktok{background:#111}
+.soc-facebook{background:#1877f2}
+.soc-youtube{background:#e11d1d}
+.soc-maps{background:#fff;color:#1f2430;border:1.5px solid #fbbf24}
+.soc-maps b{color:#b45309}
 </style>
 </head>
 <body>
@@ -115,6 +127,7 @@ const FIELD_DEFS = {
   paket:           { label: 'Paket / Permintaan Khusus', ph: 'mis. Paket Sekolah' },
   umur:            { label: 'Umur', type: 'number', ph: 'mis. 10' },
   sekolah:         { label: 'Sekolah / Instansi', ph: 'mis. SDN 001' },
+  tanggal_lahir:   { label: 'Tanggal Lahir', type: 'date' },
   kategori:        { label: 'Kategori Peserta', type: 'select', options: ['Anak', 'Dewasa', 'Guru/Pendamping', 'VIP', 'Sponsor'] },
   catatan:         { label: 'Catatan', textarea: true, ph: 'Tambahan informasi (opsional)' }
 };
@@ -149,13 +162,32 @@ function showState(ic, title, msg) {
 }
 
 /* ---------- Render ---------- */
+// Daftar kolom: dari server (PAGE.fields: label, wajib, kolom kustom). Cadangan: bawaan lokal.
 function pickFields() {
-  let keys = [];
-  if (PAGE.form_fields && PAGE.form_fields.length) {
-    keys = PAGE.form_fields.filter(function(k) { return !!FIELD_DEFS[k]; });
+  if (PAGE.fields && PAGE.fields.length) {
+    return PAGE.fields.map(function(f) {
+      const d = FIELD_DEFS[f.key] || {};
+      return { key: f.key, label: f.label || d.label || f.key, req: !!f.required, ph: f.placeholder || d.ph || '',
+        type: f.type || d.type || 'text', options: f.options || d.options, textarea: f.type === 'textarea' || !!d.textarea };
+    });
   }
+  let keys = (PAGE.form_fields || []).filter(function(k) { return !!FIELD_DEFS[k]; });
   if (!keys.length) keys = DEFAULT_FIELDS[PAGE.tipe] || DEFAULT_FIELDS.LEAD;
-  return keys;
+  return keys.map(function(k) { const d = FIELD_DEFS[k]; return { key: k, label: d.label, req: !!d.req, ph: d.ph || '', type: d.type || 'text', options: d.options, textarea: !!d.textarea }; });
+}
+const SOC_ICON = { instagram: '📸', tiktok: '🎵', facebook: '👍', youtube: '▶️' };
+function socialHtml() {
+  let h = '';
+  const soc = PAGE.social || [];
+  if (soc.length) {
+    h += '<div class="soc"><div class="soc-t">' + esc(PAGE.social_text || 'Ikuti kami') + '</div><div class="soc-row">' +
+      soc.map(function(x) { return '<a class="soc-btn soc-' + esc(x.key) + '" href="' + esc(x.url) + '" target="_blank" rel="noopener noreferrer">' + (SOC_ICON[x.key] || '🔗') + ' ' + esc(x.label) + '</a>'; }).join('') + '</div></div>';
+  }
+  if (PAGE.review && PAGE.review.url) {
+    h += '<div class="soc"><div class="soc-t">' + esc(PAGE.review.text || '') + '</div><div class="soc-row">' +
+      '<a class="soc-btn soc-maps" href="' + esc(PAGE.review.url) + '" target="_blank" rel="noopener noreferrer">⭐ <b>Tulis Ulasan di Google Maps</b></a></div></div>';
+  }
+  return h;
 }
 
 function render() {
@@ -182,9 +214,9 @@ function render() {
   }
 
   let formHtml = '';
-  fields.forEach(function(k) {
-    const f = FIELD_DEFS[k];
-    const req = f.req || (PAGE.tipe === 'RESERVASI' && (k === 'tanggal_kunjungan' || k === 'jumlah_peserta'));
+  fields.forEach(function(f) {
+    const k = f.key;
+    const req = f.req;
     formHtml += '<div class="form-group"><label>' + esc(f.label) + (req ? ' <span class="req">*</span>' : '') + '</label>';
     if (f.textarea) {
       formHtml += '<textarea class="form-control" id="f_' + k + '" placeholder="' + esc(f.ph || '') + '"' + (req ? ' required' : '') + '></textarea>';
@@ -193,7 +225,7 @@ function render() {
         f.options.map(function(o) { return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('') + '</select>';
     } else {
       formHtml += '<input class="form-control" type="' + (f.type || 'text') + '" id="f_' + k + '" placeholder="' + esc(f.ph || '') + '"' +
-        (f.type === 'number' ? ' min="0" step="1"' : '') + (req ? ' required' : '') + '>';
+        (f.type === 'number' ? ' min="0" step="1"' : '') + (k === 'tanggal_lahir' ? ' max="' + new Date().toISOString().substring(0, 10) + '"' : '') + (req ? ' required' : '') + '>';
     }
     formHtml += '</div>';
   });
@@ -214,6 +246,7 @@ function render() {
       '<form id="pubForm" onsubmit="return submitForm(event)">' + formHtml +
         '<button class="btn btn-primary" id="btnSubmit" type="submit">' + esc(PAGE.cta_label || 'Kirim') + '</button>' +
       '</form>' +
+      socialHtml() +
       '<div class="foot">© Wonderland Samarinda · ' + esc(PAGE.source || '') + '</div>' +
     '</div></div>';
 
@@ -240,10 +273,9 @@ function submitForm(e) {
   const fields = pickFields();
   const data = { utm: UTM };
   let missing = '';
-  fields.forEach(function(k) {
-    data[k] = fieldVal(k);
-    const req = FIELD_DEFS[k].req || (PAGE.tipe === 'RESERVASI' && (k === 'tanggal_kunjungan' || k === 'jumlah_peserta'));
-    if (req && !data[k]) missing = FIELD_DEFS[k].label;
+  fields.forEach(function(f) {
+    data[f.key] = fieldVal(f.key);
+    if (f.req && !data[f.key] && !missing) missing = f.label;
   });
   if (missing) { errEl.textContent = '"' + missing + '" wajib diisi.'; errEl.classList.remove('hidden'); return false; }
   if (data.whatsapp && String(data.whatsapp).replace(/\D/g, '').length < 8) {
@@ -291,20 +323,21 @@ function showSuccess(d) {
       '<div class="reg-box"><div style="font-size:12px;color:var(--muted)">REGISTRATION ID</div>' +
       '<div class="reg-id">' + esc(regId) + '</div>' +
       '<img src="' + esc(qrUrl) + '" alt="QR Check-in" referrerpolicy="no-referrer"></div>' +
-      '<p>Info pembayaran & detail acara akan dihubungkan via WhatsApp. Sampai jumpa di Wonderland! 🎡</p>' +
+      '<p>Info pembayaran & detail acara akan dihubungkan via WhatsApp. Sampai jumpa di Wonderland! 🎡</p>' + socialHtml() +
       '<div class="foot">© Wonderland Samarinda</div></div>';
   } else if (PAGE.tipe === 'RESERVASI') {
     app.innerHTML =
       '<div class="success"><div class="ic">🎉</div><h1>Reservasi Diterima!</h1>' +
       '<p>Terima kasih! Tim kami akan menghubungi Anda via WhatsApp untuk konfirmasi &amp; pembayaran.</p>' +
       '<div class="reg-box"><div style="font-size:12px;color:var(--muted)">NOMOR RESERVASI ANDA</div>' +
-      '<div class="reg-id">' + esc(d.nomor_reservasi || '-') + '</div></div>' +
+      '<div class="reg-id">' + esc(d.nomor_reservasi || '-') + '</div></div>' + socialHtml() +
       '<div class="foot">© Wonderland Samarinda</div></div>';
   } else {
     app.innerHTML =
       '<div class="success"><div class="ic">🎉</div><h1>Terima Kasih, ' + esc((PAGE && 'Data Anda') || 'Data Anda') + '!</h1>' +
       '<p>' + esc('Data Anda sudah kami terima. Tim marketing kami akan menghubungi Anda via WhatsApp.') + '</p>' +
-      (d.lead_id ? '<div class="reg-box"><div style="font-size:12px;color:var(--muted)">ID LEAD ANDA</div><div class="reg-id">' + esc(d.lead_id) + '</div></div>' : '') +
+      (d.lead_id ? '<div class="reg-box"><div style="font-size:12px;color:var(--muted)">KODE / ID ANDA (tunjukkan ke kasir)</div><div class="reg-id">' + esc(d.lead_id) + '</div></div>' : '') +
+      (PAGE.social && PAGE.social.length ? '<p style="margin-top:12px;font-size:13px">Jangan lupa follow akun kami di bawah ini — petugas kasir akan mengecek saat Anda datang.</p>' : '') + socialHtml() +
       '<div class="foot">© Wonderland Samarinda</div></div>';
   }
   window.scrollTo(0, 0);

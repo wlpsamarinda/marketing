@@ -263,6 +263,7 @@ input.form-control[readonly]{background:#f6f7fb;font-weight:700}
 .badge{display:inline-block;padding:3px 9px;border-radius:99px;font-size:10.5px;font-weight:700;letter-spacing:.3px}
 .b-green{background:#d1fae5;color:#065f46}
 .b-amber{background:#fef3c7;color:#92400e}
+.soc-set{display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap}.soc-set .form-control{flex:1;min-width:220px}
 .b-red{background:#fee2e2;color:#991b1b}
 .b-blue{background:#dbeafe;color:#1e40af}
 .b-violet{background:#ede9fe;color:#5b21b6}
@@ -7234,7 +7235,7 @@ const LB_STD = {
   nama: 'Nama', whatsapp: 'Nomor WhatsApp', email: 'Email', kota: 'Kota',
   jenis_pelanggan: 'Jenis Pelanggan', minat: 'Kebutuhan / Minat', jumlah_peserta: 'Jumlah Peserta',
   tanggal_rencana: 'Rencana Tanggal Kunjungan', tanggal_kunjungan: 'Tanggal Kunjungan', paket: 'Paket',
-  umur: 'Umur', sekolah: 'Sekolah', kategori: 'Kategori', catatan: 'Catatan'
+  umur: 'Umur', tanggal_lahir: 'Tanggal Lahir', sekolah: 'Sekolah', kategori: 'Kategori', catatan: 'Catatan'
 };
 const LB_DEFAULTS = {
   LEAD: ['nama', 'whatsapp', 'jenis_pelanggan', 'minat'],
@@ -7459,7 +7460,37 @@ function renderLandingSettings(d) {
     '<div class="lb-base"><input class="form-control" id="lpBase" placeholder="https://promo.namaanda.com  (kosongkan = link bawaan)" value="' + esc(App.landingBase) + '">' +
     '<button class="btn btn-primary" onclick="lpSaveBase()">Simpan</button>' +
     '<button class="btn btn-outline" onclick="lpShowGuide()">📘 Panduan &amp; Kode Proxy</button></div>' +
-    '<div class="form-hint" style="margin-top:6px">Link bawaan saat ini: <code>' + esc(App.landingExec || '(belum tersedia — deploy sebagai Web App)') + '?page=&lt;slug&gt;</code></div></div>';
+    '<div class="form-hint" style="margin-top:6px">Link bawaan saat ini: <code>' + esc(App.landingExec || '(belum tersedia — deploy sebagai Web App)') + '?page=&lt;slug&gt;</code></div></div>' +
+    renderSocialSettings_(d.social || {});
+}
+const SOC_PLATFORMS = [['instagram', '📸 Instagram', 'https://instagram.com/akunanda  atau cukup  akunanda'], ['tiktok', '🎵 TikTok', 'https://tiktok.com/@akunanda  atau cukup  akunanda'],
+  ['facebook', '👍 Facebook', 'https://facebook.com/namahalaman'], ['youtube', '▶️ YouTube', 'https://youtube.com/@namachannel']];
+function renderSocialSettings_(c) {
+  const row = function(k, label, ph) {
+    const it = c[k] || {};
+    return '<div class="soc-set"><label class="or-check" style="min-width:150px;font-weight:700"><input type="checkbox" id="sc_' + k + '_show"' + (it.show ? ' checked' : '') + '> ' + label + '</label>' +
+      '<input class="form-control" id="sc_' + k + '_url" placeholder="' + esc(ph) + '" value="' + esc(it.url || '') + '"></div>';
+  };
+  return '<div class="card card-pad" style="margin-bottom:16px"><div class="card-title"><span class="dot"></span>Sosial Media &amp; Ulasan Google Maps (tampil di halaman publik)</div>' +
+    '<div class="form-hint" style="margin-bottom:10px">Isi link, lalu <b>centang</b> yang ingin ditampilkan. Yang tidak dicentang tidak muncul di halaman publik. Tombol membuka akun/ulasan langsung di tab baru.</div>' +
+    SOC_PLATFORMS.map(function(p) { return row(p[0], p[1], p[2]); }).join('') +
+    '<div class="form-group" style="margin-top:8px"><label>Tulisan di atas tombol sosial media</label><input class="form-control" id="sc_social_text" maxlength="150" value="' + esc(c.social_text || '') + '"></div>' +
+    '<div style="border-top:1px dashed var(--border);margin:12px 0"></div>' +
+    row('maps', '⭐ Ulasan Google Maps', 'Tempel link ulasan Google Maps Anda') +
+    '<div class="form-group" style="margin-top:8px"><label>Kalimat ajakan ulasan</label><input class="form-control" id="sc_review_text" maxlength="200" value="' + esc(c.review_text || '') + '">' +
+    '<div class="form-hint">Gunakan kalimat ajakan, bukan syarat atau imbalan (kebijakan Google melarang hadiah untuk ulasan).</div></div>' +
+    '<button class="btn btn-primary" onclick="lpSaveSocial()">Simpan Sosial Media &amp; Ulasan</button></div>';
+}
+function lpSaveSocial() {
+  const cfg = { social_text: document.getElementById('sc_social_text').value, review_text: document.getElementById('sc_review_text').value };
+  SOC_PLATFORMS.map(function(p) { return p[0]; }).concat(['maps']).forEach(function(k) {
+    cfg[k] = { url: document.getElementById('sc_' + k + '_url').value, show: document.getElementById('sc_' + k + '_show').checked };
+  });
+  showLoading('Menyimpan...');
+  api('apiLandingSaveSocial', App.token, cfg).then(function(res) {
+    hideLoading(); toast(res.message || 'Tersimpan.');
+    Object.keys(res.data).forEach(function(k) { const u = document.getElementById('sc_' + k + '_url'); if (u && res.data[k] && res.data[k].url !== undefined) u.value = res.data[k].url; });
+  }).catch(function(err) { hideLoading(); toast((err && err.message) || 'Gagal menyimpan.', 'error'); });
 }
 function lpSaveBase() {
   const v = document.getElementById('lpBase').value.trim();
