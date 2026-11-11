@@ -7520,6 +7520,202 @@ function lpShowGuide() {
   });
 }
 
+/* ==================== LEAD FINDER (Google Places) ==================== */
+const LF = { tab: 'cari', st: null, kategori: '', kota: '', onlyWa: true, rows: [], sel: {}, tokens: {}, cities: [], saved: null, sq: '', sstat: '', ssel: {}, busy: false, q: null };
+const LF_KATEGORI = ['Sekolah', 'Taman Kanak-kanak', 'Perusahaan', 'Hotel', 'Restoran', 'Kafe', 'Event organizer', 'Komunitas', 'Pabrik', 'Bank', 'Rumah sakit', 'Travel agent', 'Gereja', 'Masjid', 'Universitas'];
+const LF_KOTA = ['Samarinda', 'Balikpapan', 'Bontang', 'Tenggarong', 'Banjarmasin', 'Palangkaraya', 'Pontianak', 'Jakarta', 'Surabaya', 'Makassar'];
+
+function renderLeadFinderPage() {
+  const c = document.getElementById('pageContainer');
+  setPageTitle('Lead Finder');
+  c.innerHTML =
+    '<div class="page-head"><div><h2>🧲 Lead Finder</h2><p>Cari calon pelanggan (sekolah, perusahaan, hotel, dll.) dari Google Maps per kota, lengkap dengan nomor HP/WA, lalu jadikan Lead.</p></div></div>' +
+    '<div id="lfStatus"></div><div id="lfTabs"></div><div id="lfBody"></div>';
+  LF.q = null;
+  api('apiLeadFinderStatus', App.token).then(function(r) { LF.st = r.data; lfRenderStatus(); }).catch(function(e) { LF.st = null; toast((e && e.message) || 'Gagal memuat status.', 'error'); });
+  lfRenderTabs(); lfRenderBody();
+}
+function lfRenderStatus() {
+  const h = document.getElementById('lfStatus'); if (!h || !LF.st) return;
+  const s = LF.st;
+  h.innerHTML = '<div class="alert ' + (s.hasKey ? 'info-state' : 'warn') + '" style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px"><div>' +
+    (s.hasKey ? '🟢 Google Places API terhubung (' + esc(s.keyHint) + ') · pencarian hari ini: <b>' + s.used + '/' + s.limit + '</b>' : '🔴 Kunci Google Places API belum diatur' + (s.canSetKey ? '.' : ' — minta Admin mengatur.')) + '</div>' +
+    (s.canSetKey ? '<button class="btn btn-outline btn-sm" onclick="lfOpenKey()">⚙ Pengaturan</button>' : '') + '</div>';
+}
+function lfRenderTabs() {
+  const h = document.getElementById('lfTabs'); if (!h) return;
+  h.innerHTML = '<div class="or-tabs">' + [['cari', '🔎 Cari'], ['simpan', '💾 Tersimpan']].map(function(t) {
+    return '<button class="or-tab' + (LF.tab === t[0] ? ' active' : '') + '" onclick="lfSetTab(\'' + t[0] + '\')">' + t[1] + '</button>'; }).join('') + '</div>';
+}
+function lfSetTab(k) { LF.tab = k; lfRenderTabs(); lfRenderBody(); }
+function lfRenderBody() { if (LF.tab === 'simpan') lfRenderSaved(); else lfRenderSearch(); }
+
+function lfOpenKey() {
+  openModal({ title: '⚙ Kunci Google Places API', footer: null, body:
+    '<div class="form-hint" style="margin-bottom:8px">Lead Finder memakai <b>Places API (New)</b> resmi milik Anda. Cara membuat kunci: (1) buka console.cloud.google.com, buat/pilih project dan aktifkan <b>Billing</b>; (2) <b>APIs &amp; Services → Library → Places API (New) → Enable</b>; (3) <b>Credentials → Create credentials → API key</b>; (4) di <b>API restrictions</b> pilih hanya Places API (New). Cek tarif &amp; kuota gratis terbaru di halaman harga Google, dan pasang <b>budget alert</b> di Billing.</div>' +
+    '<div class="form-group"><label>API Key</label><input class="form-control" id="lfKeyIn" autocomplete="off" placeholder="Tempel kunci di sini (kosongkan lalu simpan = hapus)"></div>' +
+    '<div class="form-hint">Kunci disimpan di server (Script Properties) dan tidak pernah dikirim ke browser.</div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="btn btn-outline" onclick="closeModal()">Batal</button><button class="btn btn-primary" onclick="lfSaveKey()">Simpan</button></div>' });
+}
+function lfSaveKey() {
+  const v = document.getElementById('lfKeyIn').value;
+  api('apiLeadFinderSaveKey', App.token, v).then(function(r) {
+    toast(r.message || 'Tersimpan.'); closeModal();
+    return api('apiLeadFinderStatus', App.token);
+  }).then(function(r) { LF.st = r.data; lfRenderStatus(); }).catch(function(e) { toast((e && e.message) || 'Gagal.', 'error'); });
+}
+
+/* ---- Tab Cari ---- */
+function lfRenderSearch() {
+  const h = document.getElementById('lfBody'); if (!h) return;
+  h.innerHTML =
+    '<div class="card card-pad" style="margin-bottom:12px"><div class="form-row">' +
+      '<div class="form-group"><label>Jenis usaha / instansi</label><input class="form-control" id="lfKat" list="lfKatList" placeholder="mis. sekolah dasar" value="' + esc(LF.kategori) + '" onkeydown="if(event.key===\'Enter\')lfSearch(true)"><datalist id="lfKatList">' + LF_KATEGORI.map(function(x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist></div>' +
+      '<div class="form-group"><label>Kota (boleh lebih dari satu, pisahkan koma)</label><input class="form-control" id="lfKota" list="lfKotaList" placeholder="mis. Samarinda, Balikpapan" value="' + esc(LF.kota) + '" onkeydown="if(event.key===\'Enter\')lfSearch(true)"><datalist id="lfKotaList">' + LF_KOTA.map(function(x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist></div></div>' +
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn btn-primary" id="lfGo" onclick="lfSearch(true)">🔎 Cari</button>' +
+      '<label class="or-check"><input type="checkbox" id="lfOnlyWa"' + (LF.onlyWa ? ' checked' : '') + ' onchange="LF.onlyWa=this.checked;lfRenderResults()"> Hanya yang punya nomor HP/WA</label></div>' +
+      '<div class="form-hint" style="margin-top:6px">Satu pencarian menampilkan sampai 20 hasil per kota; klik “Muat lebih banyak” untuk berikutnya (maks. sekitar 60). Setiap pencarian dihitung ke kuota Google Anda.</div></div>' +
+    '<div id="lfBar"></div><div class="card"><div class="grid-table-wrap" id="lfRes"></div><div id="lfMore" style="padding:10px;text-align:center"></div></div>';
+  lfRenderResults();
+}
+function lfSearch(fresh) {
+  if (LF.busy) return;
+  const kat = document.getElementById('lfKat'), kota = document.getElementById('lfKota');
+  if (fresh) {
+    LF.kategori = kat.value.trim(); LF.kota = kota.value.trim();
+    if (!LF.kategori || !LF.kota) { toast('Isi jenis usaha dan kota.', 'error'); return; }
+    LF.cities = LF.kota.split(',').map(function(x) { return x.trim(); }).filter(Boolean).slice(0, 5);
+    LF.rows = []; LF.sel = {}; LF.tokens = {};
+    LF.todo = LF.cities.slice();
+  } else {
+    LF.todo = Object.keys(LF.tokens).filter(function(k) { return LF.tokens[k]; });
+  }
+  if (!LF.todo.length) return;
+  LF.busy = true; lfSetBusy(true);
+  const next = function() {
+    if (!LF.todo.length) { LF.busy = false; lfSetBusy(false); lfRenderResults(); return Promise.resolve(); }
+    const city = LF.todo.shift();
+    return api('apiLeadFinderSearch', App.token, { kategori: LF.kategori, kota: city, pageToken: fresh ? '' : LF.tokens[city] }).then(function(r) {
+      const seen = {}; LF.rows.forEach(function(x) { seen[x.place_id] = 1; });
+      r.data.rows.forEach(function(x) { if (!seen[x.place_id]) { x.kotaCari = city; LF.rows.push(x); } });
+      LF.tokens[city] = r.data.nextPageToken || '';
+      if (LF.st) { LF.st.used = r.data.used; lfRenderStatus(); }
+      lfRenderResults();
+      return next();
+    });
+  };
+  next().catch(function(e) { LF.busy = false; lfSetBusy(false); lfRenderResults(); toast((e && e.message) || 'Pencarian gagal.', 'error'); });
+}
+function lfSetBusy(b) { const g = document.getElementById('lfGo'); if (g) { g.disabled = b; g.textContent = b ? '⏳ Mencari...' : '🔎 Cari'; } }
+function lfView() { return LF.rows.filter(function(r) { return !LF.onlyWa || r.whatsapp; }); }
+function lfRenderResults() {
+  const host = document.getElementById('lfRes'); if (!host) return;
+  const view = lfView();
+  const n = Object.keys(LF.sel).length;
+  const bar = document.getElementById('lfBar');
+  if (bar) bar.innerHTML = LF.rows.length ? '<div class="or-bar" style="margin-bottom:10px"><div><b>' + view.length + '</b> tampil dari ' + LF.rows.length + ' hasil · <b>' + n + '</b> dipilih</div><div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">' +
+    '<button class="btn btn-outline btn-sm" onclick="lfSelAll()">Pilih semua yang baru</button><button class="btn btn-primary" onclick="lfSaveSel()"' + (n ? '' : ' disabled') + '>💾 Simpan terpilih (' + n + ')</button></div></div>' : '';
+  if (!view.length) { host.innerHTML = '<div class="grid-empty">' + (LF.rows.length ? 'Tidak ada hasil dengan nomor HP/WA. Matikan filter “Hanya yang punya nomor HP/WA” untuk melihat semua.' : 'Belum ada hasil. Isi jenis usaha dan kota, lalu klik Cari.') + '</div>'; document.getElementById('lfMore').innerHTML = ''; return; }
+  let h = '<table class="grid-table"><thead><tr><th class="col-check"></th><th>Nama</th><th>Kategori</th><th>Alamat</th><th>Telepon</th><th>Rating</th><th></th></tr></thead><tbody>';
+  view.forEach(function(r) {
+    const i = LF.rows.indexOf(r);
+    const dis = !!r.exists;
+    h += '<tr><td class="col-check"><input type="checkbox" ' + (dis ? 'disabled ' : '') + (LF.sel[i] ? 'checked ' : '') + 'onchange="lfToggle(' + i + ',this.checked)"></td>' +
+      '<td><b>' + esc(r.nama) + '</b>' + (r.status_bisnis && r.status_bisnis !== 'OPERATIONAL' ? ' <span class="badge b-red">' + esc(r.status_bisnis) + '</span>' : '') + (r.kotaCari ? '<div class="or-sub">' + esc(r.kotaCari) + '</div>' : '') + '</td>' +
+      '<td>' + esc(r.kategori) + '</td><td style="max-width:260px">' + esc(r.alamat) + '</td>' +
+      '<td>' + (r.telepon ? esc(r.telepon) + (r.whatsapp ? ' <span class="badge b-green">HP/WA</span>' : ' <span class="badge b-gray">Telepon</span>') : '<span style="color:#c3c6cf">—</span>') +
+        (r.exists === 'TERSIMPAN' ? '<div><span class="badge b-blue">Sudah tersimpan</span></div>' : r.exists === 'SUDAH_CRM' ? '<div><span class="badge b-amber">Sudah di CRM</span></div>' : '') + '</td>' +
+      '<td>' + (r.rating ? '⭐ ' + r.rating + ' <span class="or-sub">(' + r.ulasan + ')</span>' : '—') + '</td>' +
+      '<td>' + (r.maps_url ? '<a href="' + esc(r.maps_url) + '" target="_blank" rel="noopener noreferrer">Maps ↗</a>' : '') + '</td></tr>';
+  });
+  host.innerHTML = h + '</tbody></table>';
+  const more = Object.keys(LF.tokens).some(function(k) { return LF.tokens[k]; });
+  document.getElementById('lfMore').innerHTML = more && !LF.busy ? '<button class="btn btn-outline" onclick="lfSearch(false)">⬇ Muat lebih banyak</button>' : '';
+}
+function lfToggle(i, on) { if (on) LF.sel[i] = 1; else delete LF.sel[i]; lfRenderResults(); }
+function lfSelAll() { lfView().forEach(function(r) { if (!r.exists) LF.sel[LF.rows.indexOf(r)] = 1; }); lfRenderResults(); }
+function lfSaveSel() {
+  const items = Object.keys(LF.sel).map(function(i) { return LF.rows[i]; }).filter(Boolean);
+  if (!items.length) return;
+  showLoading('Menyimpan...');
+  api('apiLeadFinderSave', App.token, items, { kategori: LF.kategori, kota: LF.kota }).then(function(r) {
+    hideLoading(); toast(r.message || 'Tersimpan.');
+    items.forEach(function(x) { x.exists = 'TERSIMPAN'; }); LF.sel = {}; LF.saved = null; lfRenderResults();
+  }).catch(function(e) { hideLoading(); toast((e && e.message) || 'Gagal menyimpan.', 'error'); });
+}
+
+/* ---- Tab Tersimpan ---- */
+function lfRenderSaved() {
+  const h = document.getElementById('lfBody'); if (!h) return;
+  if (!LF.saved) {
+    h.innerHTML = '<div class="grid-empty">Memuat...</div>';
+    api('apiLeadFinderList', App.token).then(function(r) { LF.saved = r.data; lfRenderSaved(); }).catch(function(e) { h.innerHTML = '<div class="form-error">' + esc((e && e.message) || 'Gagal memuat.') + '</div>'; });
+    return;
+  }
+  const q = LF.sq.toLowerCase();
+  const rows = LF.saved.rows.filter(function(r) {
+    if (LF.sstat && r.status !== LF.sstat) return false;
+    return !q || (r.nama + ' ' + r.kota + ' ' + r.kategori + ' ' + r.alamat + ' ' + r.telepon).toLowerCase().indexOf(q) >= 0;
+  });
+  const n = Object.keys(LF.ssel).length;
+  let t = '<div class="filter-bar"><div class="form-group" style="flex:1;min-width:200px"><label>Cari</label><input class="form-control" value="' + esc(LF.sq) + '" oninput="LF.sq=this.value;lfRenderSavedTable()" placeholder="Nama, kota, kategori, telepon"></div>' +
+    '<div class="form-group"><label>Status</label><select class="form-control" onchange="LF.sstat=this.value;lfRenderSavedTable()"><option value="">Semua</option>' +
+      ['BARU', 'DIJADIKAN LEAD', 'SUDAH ADA'].map(function(s) { return '<option' + (LF.sstat === s ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></div></div>' +
+    '<div class="or-bar" style="margin-bottom:10px" id="lfSBar"></div><div class="card"><div class="grid-table-wrap" id="lfSTable"></div></div>';
+  h.innerHTML = t;
+  lfRenderSavedTable();
+}
+function lfSavedRows() {
+  const q = LF.sq.toLowerCase();
+  return LF.saved.rows.filter(function(r) {
+    if (LF.sstat && r.status !== LF.sstat) return false;
+    return !q || (r.nama + ' ' + r.kota + ' ' + r.kategori + ' ' + r.alamat + ' ' + r.telepon).toLowerCase().indexOf(q) >= 0;
+  });
+}
+function lfRenderSavedTable() {
+  const host = document.getElementById('lfSTable'); if (!host || !LF.saved) return;
+  const rows = lfSavedRows();
+  const n = Object.keys(LF.ssel).length;
+  document.getElementById('lfSBar').innerHTML = '<div><b>' + rows.length + '</b> data · <b>' + n + '</b> dipilih</div><div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">' +
+    '<select class="form-control" id="lfPic" style="width:auto">' + orPicOptions('', '— PIC lead —') + '</select>' +
+    '<button class="btn btn-primary btn-sm" onclick="lfToLead()"' + (n ? '' : ' disabled') + '>➡ Jadikan Lead (' + n + ')</button>' +
+    '<button class="btn btn-outline btn-sm" onclick="lfExport()">⬇ Unduh CSV</button>' +
+    '<button class="btn btn-outline btn-sm" onclick="lfDelete()"' + (n ? '' : ' disabled') + '>🗑 Hapus</button></div>';
+  if (!rows.length) { host.innerHTML = '<div class="grid-empty">Belum ada data tersimpan.</div>'; return; }
+  const all = rows.every(function(r) { return LF.ssel[r.finder_id]; });
+  let h = '<table class="grid-table"><thead><tr><th class="col-check"><input type="checkbox" onchange="lfSToggleAll(this.checked)"' + (all ? ' checked' : '') + '></th><th>Nama</th><th>Kota</th><th>Kategori</th><th>Telepon</th><th>Status</th><th></th></tr></thead><tbody>';
+  rows.slice(0, 300).forEach(function(r) {
+    h += '<tr><td class="col-check"><input type="checkbox" ' + (LF.ssel[r.finder_id] ? 'checked ' : '') + 'onchange="lfSToggle(\'' + esc(r.finder_id) + '\',this.checked)"></td><td><b>' + esc(r.nama) + '</b><div class="or-sub">' + esc(r.alamat) + '</div></td><td>' + esc(r.kota) + '</td><td>' + esc(r.kategori) + '</td>' +
+      '<td>' + esc(r.telepon || '—') + (r.whatsapp ? ' <span class="badge b-green">HP/WA</span>' : '') + '</td><td><span class="badge ' + (r.status === 'DIJADIKAN LEAD' ? 'b-green' : r.status === 'SUDAH ADA' ? 'b-amber' : 'b-blue') + '">' + esc(r.status) + '</span>' + (r.lead_id ? '<div class="or-sub">' + esc(r.lead_id) + '</div>' : '') + '</td>' +
+      '<td>' + (r.maps_url ? '<a href="' + esc(r.maps_url) + '" target="_blank" rel="noopener noreferrer">Maps ↗</a>' : '') + '</td></tr>';
+  });
+  host.innerHTML = h + '</tbody></table>' + (rows.length > 300 ? '<div class="form-hint" style="padding:8px">Menampilkan 300 pertama; gunakan pencarian untuk mempersempit.</div>' : '');
+}
+function lfSToggle(id, on) { if (on) LF.ssel[id] = 1; else delete LF.ssel[id]; lfRenderSavedTable(); }
+function lfSToggleAll(on) { lfSavedRows().slice(0, 300).forEach(function(r) { if (on) LF.ssel[r.finder_id] = 1; else delete LF.ssel[r.finder_id]; }); lfRenderSavedTable(); }
+function lfToLead() {
+  const ids = Object.keys(LF.ssel); if (!ids.length) return;
+  const pic = (document.getElementById('lfPic') || {}).value || '';
+  showLoading('Membuat lead...');
+  api('apiLeadFinderToLead', App.token, ids, { PIC: pic }).then(function(r) { hideLoading(); toast(r.message || 'Selesai.'); LF.ssel = {}; LF.saved = null; lfRenderSaved(); })
+    .catch(function(e) { hideLoading(); toast((e && e.message) || 'Gagal.', 'error'); });
+}
+function lfDelete() {
+  const ids = Object.keys(LF.ssel); if (!ids.length) return;
+  openConfirm('Hapus ' + ids.length + ' data tersimpan?', function() {
+    api('apiDeleteMany', App.token, 'leadfinder', ids).then(function(r) { toast(r.message || 'Dihapus.'); LF.ssel = {}; LF.saved = null; lfRenderSaved(); })
+      .catch(function(e) { toast((e && e.message) || 'Gagal.', 'error'); });
+  }, 'Hapus');
+}
+function lfExport() {
+  if (!LF.saved) return;
+  const rows = lfSavedRows();
+  const cell = function(v) { v = String(v === undefined || v === null ? '' : v); if (/^[=+\-@]/.test(v)) v = "'" + v; return '"' + v.replace(/"/g, '""') + '"'; };
+  const head = ['ID', 'Nama', 'Kota', 'Kategori', 'Alamat', 'Telepon', 'WhatsApp', 'Rating', 'Ulasan', 'Website', 'Maps', 'Status'];
+  const lines = [head.map(cell).join(',')].concat(rows.map(function(r) { return [r.finder_id, r.nama, r.kota, r.kategori, r.alamat, r.telepon, r.whatsapp, r.rating, r.ulasan, r.website, r.maps_url, r.status].map(cell).join(','); }));
+  downloadBlob_(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }), 'lead-finder-' + todayStr() + '.csv');
+}
+
 /* ==================== ROUTING ==================== */
 const ROUTES = [
   { key: 'dashboard',    title: 'Dashboard',      icon: '📊', section: 'Utama',     roles: ALL_ROLES, render: renderDashboard },
@@ -7536,6 +7732,7 @@ const ROUTES = [
   { key: 'activities',   title: 'Aktivitas',      icon: '✅', section: 'Marketing', roles: ALL_ROLES, render: function() { renderModulePage('activities'); } },
   { key: 'customers',    title: 'CRM Pelanggan',  icon: '🤝', section: 'Penjualan', roles: ALL_ROLES, render: function() { renderModulePage('customers'); } },
   { key: 'outreach',     title: 'Customer Outreach', icon: '📨', section: 'Penjualan', roles: ALL_ROLES, render: renderOutreachPage },
+  { key: 'leadfinder',   title: 'Lead Finder',    icon: '🧲', section: 'Penjualan', roles: ['ADMIN', 'MANAGER', 'MARKETING'], render: renderLeadFinderPage },
   { key: 'landingpages', title: 'Landing Pages',  icon: '🌐', section: 'Penjualan', roles: ALL_ROLES, render: function() { renderModulePage('landingpages'); } },
   { key: 'outreachtpl',  title: 'Materi Outreach', icon: '📝', section: 'Penjualan', roles: ALL_ROLES, render: function() { renderModulePage('outreachtpl'); } },
   { key: 'leads',        title: 'Leads',          icon: '🧲', section: 'Penjualan', roles: ALL_ROLES, render: function() { renderModulePage('leads'); } },
