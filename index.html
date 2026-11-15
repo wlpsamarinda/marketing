@@ -215,6 +215,18 @@ input.form-control[readonly]{background:#f6f7fb;font-weight:700}
 .grid-4{grid-template-columns:repeat(4,1fr)}
 .grid-5{grid-template-columns:repeat(5,1fr)}
 .grid-6{grid-template-columns:repeat(6,1fr)}
+.rsv-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.rsv-dow{text-align:center;font-size:12px;font-weight:700;color:var(--muted);padding:4px 0}
+.rsv-cell{min-height:74px;border:1px solid var(--border);border-radius:10px;padding:6px;cursor:pointer;background:#fff;display:flex;flex-direction:column;gap:2px}
+.rsv-cell:hover{border-color:var(--primary)}
+.rsv-empty{border:none;background:transparent;cursor:default}
+.rsv-d{font-weight:700;font-size:13px}
+.rsv-has{background:#f5f3ff;border-color:#c4b5fd}
+.rsv-n{font-size:12px;font-weight:700;color:#6d28d9}
+.rsv-p{font-size:11px;color:var(--muted)}
+.rsv-today{box-shadow:inset 0 0 0 2px #f59e0b}
+.rsv-sel{background:#ede9fe;border-color:#7c3aed}
+@media(max-width:640px){.rsv-cell{min-height:56px;padding:4px}.rsv-n{font-size:10px}.rsv-p{display:none}}
 .dash-section{margin-bottom:16px}
 .two-col{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:16px}
 
@@ -1251,6 +1263,7 @@ function DataGrid(container, opts) {
     setLoading: function(v) { state.loading = v; render(); },
     reload: function(data) { state.loading = false; state.data = data || []; state.page = 1; state.selected = {}; render(); },
     getData: function() { return state.data; },
+    setFilter: function(k, v) { state.filters[k] = String(v); state.page = 1; render(); },
     getFiltered: function() { return getFiltered(); }
   };
 }
@@ -1699,7 +1712,7 @@ const MODULE_CONFIG = {
     filters: [{ key: 'jenis_pelanggan', label: 'Jenis', options: optFn('jenis_pelanggan') }, { key: 'status', label: 'Status', options: ['AKTIF', 'PASIF', 'VIP'] }, { key: 'sumber', label: 'Sumber', options: optFn('sumber') }, { key: 'bulan_lahir', label: 'Bulan Lahir', options: function() { return CRM_MONTHS.slice(); } }]
   },
   leads: {
-    title: 'Leads', icon: '🧲', desc: 'Calon pelanggan dan pipeline penjualan — profil CRM otomatis dari nomor WhatsApp, jadwal Follow-up otomatis dari tanggal follow up',
+    title: 'Leads', icon: '🧲', desc: 'Calon pelanggan dan pipeline penjualan — lead baru masuk Leads + CRM; masuk Follow-up saat status diubah ke FOLLOW UP; masuk Reservasi dari hasil Follow-up = RESERVATION',
     idField: 'lead_id',
     columns: [
       { key: 'lead_id', label: 'ID', type: 'badge', width: 100 },
@@ -1722,11 +1735,10 @@ const MODULE_CONFIG = {
       { key: 'whatsapp', label: 'WhatsApp', type: 'tel', required: true, hint: 'Dicek otomatis ke CRM — profil CRM baru hanya dibuat bila nomor ini belum terdaftar.' },
       { key: 'sumber', label: 'Sumber', type: 'select', options: optFn('sumber'), required: true },
       { key: 'jenis_pelanggan', label: 'Jenis Pelanggan', type: 'select', options: optFn('jenis_pelanggan') },
-      { key: 'tahap', label: 'Status Lead', type: 'select', options: PIPELINE_LEADS, defaultValue: 'NEW', required: true, hint: 'Alur: NEW → CONTACTED → INTERESTED → FOLLOW UP → RESERVED (dilanjutkan ke reservasi) atau LOST. Status RESERVED / LOST diatur otomatis dari hasil Follow Up.' },
+      { key: 'tahap', label: 'Status Lead', type: 'select', options: PIPELINE_LEADS, defaultValue: 'NEW', required: true, hint: 'Alur: NEW → CONTACTED → INTERESTED → FOLLOW UP → RESERVED atau LOST. Lead baru hanya masuk Leads & CRM. Jadwal di menu Follow-up dibuat otomatis saat status diubah ke FOLLOW UP. Status RESERVED / LOST diatur otomatis dari hasil Follow Up.' },
       { key: 'status', label: 'Status', type: 'select', options: ['AKTIF', 'HOT', 'SELESAI', 'BATAL'], defaultValue: 'AKTIF' },
       { key: 'nilai_potensi', label: 'Nilai Potensi (Rp)', type: 'number', min: 0 },
-      { key: 'tanggal_followup', label: 'Tanggal Follow-up', type: 'date', hint: 'Bila diisi, jadwal otomatis muncul di menu Follow-up (status TERJADWAL). Mengubah tanggal ini menggeser jadwal yang belum dikerjakan.' },
-      { key: 'masuk_followup', label: 'Masukkan ke Daftar Follow Up', type: 'select', options: ['YA', 'TIDAK'], defaultValue: 'TIDAK', hint: 'Pilih YA untuk menjadwalkan follow up walau tanggal belum diisi (dijadwalkan hari ini). Lead berstatus RESERVED / LOST tidak dijadwalkan.' },
+      { key: 'tanggal_followup', label: 'Tanggal Follow-up', type: 'date', hint: 'Dipakai saat Status Lead = FOLLOW UP: jadwal di menu Follow-up dibuat pada tanggal ini (kosong = hari ini). Mengubah tanggal menggeser jadwal yang belum dikerjakan.' },
       { key: 'PIC', label: 'PIC', type: 'select', dynamic: 'team', required: true },
       { key: 'kebutuhan', label: 'Kebutuhan', type: 'textarea', full: true },
       { key: 'catatan', label: 'Catatan', type: 'textarea', full: true },
@@ -3254,6 +3266,163 @@ function crmBdayExport() {
   exportCrmExcel(null, rows, 'Pelanggan berulang tahun bulan ' + CRM_MONTHS[(App.crmBdayMonth || 1) - 1]);
 }
 
+/* ==================== LEADS: WIDGET PER SUMBER ==================== */
+const LEAD_PERIODS = [['all', 'Semua waktu'], ['month', 'Bulan ini'], ['30d', '30 hari terakhir'], ['year', 'Tahun ini']];
+function leadInPeriod_(r, per) {
+  if (per === 'all') return true;
+  const d = String(r.tanggal || r.created_at || '').substring(0, 10);
+  if (!d) return false;
+  const now = new Date(), pad = function(n) { return String(n).padStart(2, '0'); };
+  if (per === 'month') return d.substring(0, 7) === now.getFullYear() + '-' + pad(now.getMonth() + 1);
+  if (per === 'year') return d.substring(0, 4) === String(now.getFullYear());
+  if (per === '30d') { const c = new Date(now.getTime() - 30 * 86400000); return d >= c.getFullYear() + '-' + pad(c.getMonth() + 1) + '-' + pad(c.getDate()); }
+  return true;
+}
+function renderLeadWidgets() {
+  const host = document.getElementById('summaryHost');
+  if (!host || App.currentRoute !== 'leads' || !App.grid) return;
+  if (!App.leadPeriod) App.leadPeriod = 'all';
+  const all = App.grid.getData();
+  const data = all.filter(function(r) { return leadInPeriod_(r, App.leadPeriod); });
+  const T = function(r) { return String(r.tahap || '').toUpperCase(); };
+  const total = data.length;
+  const fu = data.filter(function(r) { return T(r) === 'FOLLOW UP'; }).length;
+  const res = data.filter(function(r) { return T(r) === 'RESERVED' || T(r) === 'BERHASIL'; }).length;
+  const lost = data.filter(function(r) { return T(r) === 'LOST'; }).length;
+  const baru = data.filter(function(r) { return T(r) === 'NEW'; }).length;
+  const potensi = data.reduce(function(a, r) { return a + (Number(r.nilai_potensi) || 0); }, 0);
+  const by = {};
+  data.forEach(function(r) {
+    const k = String(r.sumber || '').trim() || '(Tanpa sumber)';
+    const o = by[k] || (by[k] = { n: 0, aktif: 0, fu: 0, res: 0, lost: 0, pot: 0 });
+    o.n++; o.pot += Number(r.nilai_potensi) || 0;
+    const t = T(r);
+    if (t === 'FOLLOW UP') o.fu++;
+    if (t === 'RESERVED' || t === 'BERHASIL') o.res++;
+    else if (t === 'LOST') o.lost++;
+    else o.aktif++;
+  });
+  const rows = Object.keys(by).map(function(k) { return Object.assign({ k: k }, by[k]); }).sort(function(a, b) { return b.n - a.n || a.k.localeCompare(b.k); });
+  const max = rows.reduce(function(m, r) { return Math.max(m, r.n); }, 1);
+  const top = rows[0];
+  const perOpts = LEAD_PERIODS.map(function(p) { return '<option value="' + p[0] + '"' + (App.leadPeriod === p[0] ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('');
+  let table;
+  if (!rows.length) table = '<div class="grid-empty" style="padding:16px">Belum ada lead pada periode ini.</div>';
+  else {
+    table = '<div class="grid-table-wrap"><table class="table-plain"><thead><tr><th>Sumber</th><th style="min-width:160px">Jumlah Lead</th><th style="text-align:right">Aktif</th><th style="text-align:right">Follow Up</th><th style="text-align:right">Reserved</th><th style="text-align:right">Lost</th><th style="text-align:right">Konversi</th><th style="text-align:right">Nilai Potensi</th></tr></thead><tbody>';
+    rows.forEach(function(r) {
+      const conv = r.n ? Math.round(r.res / r.n * 1000) / 10 : 0;
+      table += '<tr style="cursor:pointer" title="Klik untuk menyaring tabel di bawah" onclick="leadFilterSumber(\'' + esc(r.k === '(Tanpa sumber)' ? '' : r.k).replace(/'/g, '&#39;') + '\')"><td><b>' + esc(r.k) + '</b></td>' +
+        '<td><div style="display:flex;align-items:center;gap:8px"><b style="min-width:28px">' + fmtNum(r.n) + '</b><div class="progress" style="flex:1"><span style="width:' + Math.max(4, Math.round(r.n / max * 100)) + '%"></span></div><small>' + (total ? Math.round(r.n / total * 100) : 0) + '%</small></div></td>' +
+        '<td style="text-align:right">' + fmtNum(r.aktif) + '</td><td style="text-align:right">' + fmtNum(r.fu) + '</td><td style="text-align:right">' + fmtNum(r.res) + '</td><td style="text-align:right">' + fmtNum(r.lost) + '</td>' +
+        '<td style="text-align:right"><span class="badge ' + (conv >= 20 ? 'b-green' : conv > 0 ? 'b-amber' : 'b-gray') + '">' + conv + '%</span></td><td style="text-align:right">' + esc(fmtIDR(r.pot)) + '</td></tr>';
+    });
+    table += '</tbody></table></div>';
+  }
+  host.innerHTML = '<div class="cards-row grid-5">' +
+    statCard('Total Lead', fmtNum(total), perOpts ? LEAD_PERIODS.filter(function(p) { return p[0] === App.leadPeriod; })[0][1] : '', '🧲', 'ico-violet') +
+    statCard('Lead Baru (NEW)', fmtNum(baru), 'Belum dihubungi / belum diproses', '🆕', 'ico-blue') +
+    statCard('Sedang Follow Up', fmtNum(fu), 'Status FOLLOW UP', '📞', 'ico-amber') +
+    statCard('Reserved', fmtNum(res), total ? Math.round(res / total * 1000) / 10 + '% konversi · Lost ' + fmtNum(lost) : '', '✅', 'ico-green') +
+    statCard('Sumber Terbanyak', top ? esc(top.k) : '—', top ? fmtNum(top.n) + ' lead · potensi ' + fmtIDR(potensi) : '', '🏆', 'ico-rose') +
+  '</div>' +
+  '<div class="card card-pad" style="margin-bottom:14px"><div class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="dot"></span>📊 Lead per Sumber' +
+    '<span style="margin-left:auto"><select class="form-control" style="width:auto;padding:5px 8px" onchange="App.leadPeriod=this.value;renderLeadWidgets()">' + perOpts + '</select></span></div>' + table + '</div>' +
+  '<div class="section-title">Data Leads</div>';
+}
+function leadFilterSumber(k) {
+  if (App.grid && App.grid.setFilter) App.grid.setFilter('sumber', k);
+}
+
+/* ==================== RESERVASI: KALENDER KUNJUNGAN ==================== */
+function rsvLabelCustomer_(id) {
+  const c = (App.lookups.customers || []).filter(function(x) { return String(x.id) === String(id); })[0];
+  return c ? c.nama : String(id || '—');
+}
+function rsvDateKey_(v) { return String(v || '').substring(0, 10); }
+function rsvAct_(r) { return ['BATAL'].indexOf(String(r.status_reservasi || '').toUpperCase()) < 0; }
+function renderReservationCalendar() {
+  const host = document.getElementById('summaryHost');
+  if (!host || App.currentRoute !== 'reservations' || !App.grid) return;
+  const now = new Date();
+  if (!App.rsvMonth) App.rsvMonth = { y: now.getFullYear(), m: now.getMonth() };
+  const Y = App.rsvMonth.y, M = App.rsvMonth.m;
+  const pad = function(n) { return String(n).padStart(2, '0'); };
+  const todayKey = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+  const data = App.grid.getData().filter(function(r) { return rsvDateKey_(r.tanggal_kunjungan); });
+  const byDay = {};
+  data.forEach(function(r) { const k = rsvDateKey_(r.tanggal_kunjungan); (byDay[k] = byDay[k] || []).push(r); });
+  const first = new Date(Y, M, 1), daysIn = new Date(Y, M + 1, 0).getDate();
+  const startDow = (first.getDay() + 6) % 7;   // Senin = 0
+  const monthKey = Y + '-' + pad(M + 1);
+  let monthN = 0, monthPax = 0;
+  Object.keys(byDay).forEach(function(k) { if (k.substring(0, 7) === monthKey) byDay[k].forEach(function(r) { if (rsvAct_(r)) { monthN++; monthPax += Number(r.jumlah_peserta) || 0; } }); });
+  // statistik ke depan
+  const in7 = new Date(now.getTime() + 7 * 86400000), k7 = in7.getFullYear() + '-' + pad(in7.getMonth() + 1) + '-' + pad(in7.getDate());
+  let todayN = 0, next7 = 0, draft = 0;
+  data.forEach(function(r) {
+    if (!rsvAct_(r)) return;
+    const k = rsvDateKey_(r.tanggal_kunjungan);
+    if (k === todayKey) todayN++;
+    if (k >= todayKey && k <= k7) next7++;
+    if (String(r.status_reservasi || '').toUpperCase() === 'DRAFT') draft++;
+  });
+  const dow = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+  let cal = '<div class="rsv-cal">' + dow.map(function(d) { return '<div class="rsv-dow">' + d + '</div>'; }).join('');
+  for (let i = 0; i < startDow; i++) cal += '<div class="rsv-cell rsv-empty"></div>';
+  for (let d = 1; d <= daysIn; d++) {
+    const key = monthKey + '-' + pad(d);
+    const list = (byDay[key] || []).filter(rsvAct_);
+    const pax = list.reduce(function(a, r) { return a + (Number(r.jumlah_peserta) || 0); }, 0);
+    const sel = App.rsvDay === key;
+    cal += '<div class="rsv-cell' + (key === todayKey ? ' rsv-today' : '') + (list.length ? ' rsv-has' : '') + (sel ? ' rsv-sel' : '') + '" onclick="rsvPickDay(\'' + key + '\')">' +
+      '<div class="rsv-d">' + d + '</div>' +
+      (list.length ? '<div class="rsv-n">' + list.length + ' res</div><div class="rsv-p">' + fmtNum(pax) + ' pax</div>' : '') + '</div>';
+  }
+  cal += '</div>';
+  // daftar: hari terpilih, atau jadwal mendatang
+  let listTitle, items;
+  if (App.rsvDay) {
+    listTitle = 'Reservasi tanggal ' + App.rsvDay.split('-').reverse().join('/');
+    items = (byDay[App.rsvDay] || []).slice();
+  } else {
+    listTitle = 'Jadwal kunjungan mendatang';
+    items = data.filter(function(r) { return rsvAct_(r) && rsvDateKey_(r.tanggal_kunjungan) >= todayKey; })
+      .sort(function(a, b) { return rsvDateKey_(a.tanggal_kunjungan).localeCompare(rsvDateKey_(b.tanggal_kunjungan)); }).slice(0, 12);
+  }
+  let list;
+  if (!items.length) list = '<div class="grid-empty" style="padding:14px">' + (App.rsvDay ? 'Tidak ada reservasi pada tanggal ini.' : 'Belum ada kunjungan terjadwal.') + '</div>';
+  else {
+    list = '<div class="grid-table-wrap"><table class="table-plain"><thead><tr><th>Tanggal</th><th>Pelanggan</th><th>Paket</th><th style="text-align:right">Pax</th><th>Status</th><th>PIC</th></tr></thead><tbody>';
+    items.forEach(function(r) {
+      const k = rsvDateKey_(r.tanggal_kunjungan);
+      list += '<tr' + (rsvAct_(r) ? '' : ' style="opacity:.5"') + '><td style="white-space:nowrap"><b>' + esc(k.split('-').reverse().join('/')) + '</b>' + (k === todayKey ? ' <span class="badge b-red">HARI INI</span>' : '') + '</td>' +
+        '<td>' + esc(rsvLabelCustomer_(r.customer_id)) + '</td><td>' + esc(r.paket || '—') + '</td><td style="text-align:right">' + fmtNum(r.jumlah_peserta || 0) + '</td>' +
+        '<td><span class="badge ' + c360badge(r.status_reservasi) + '">' + esc(r.status_reservasi || '—') + '</span></td><td>' + esc(r.PIC || '—') + '</td></tr>';
+    });
+    list += '</tbody></table></div>';
+  }
+  host.innerHTML = '<div class="cards-row grid-4">' +
+      statCard('Kunjungan Hari Ini', fmtNum(todayN), 'Reservasi aktif', '📍', 'ico-rose') +
+      statCard('7 Hari ke Depan', fmtNum(next7), 'Termasuk hari ini', '🗓️', 'ico-amber') +
+      statCard(CRM_MONTHS[M] + ' ' + Y, fmtNum(monthN), fmtNum(monthPax) + ' peserta (tanpa yang batal)', '🎫', 'ico-violet') +
+      statCard('Draft Perlu Dilengkapi', fmtNum(draft), 'Dari Follow Up — lengkapi tanggal, paket, DP', '📝', draft ? 'ico-amber' : 'ico-green') +
+    '</div>' +
+    '<div class="card card-pad" style="margin-bottom:14px"><div class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="dot"></span>📅 Kalender Reservasi — ' + CRM_MONTHS[M] + ' ' + Y +
+      '<span style="margin-left:auto;display:flex;gap:6px"><button class="btn btn-outline btn-sm" onclick="rsvNav(-1)">◀</button><button class="btn btn-outline btn-sm" onclick="rsvNav(0)">Hari ini</button><button class="btn btn-outline btn-sm" onclick="rsvNav(1)">▶</button></span></div>' +
+      cal + '</div>' +
+    '<div class="card card-pad" style="margin-bottom:14px"><div class="card-title" style="display:flex;align-items:center;gap:8px"><span class="dot"></span>' + esc(listTitle) +
+      (App.rsvDay ? '<button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="App.rsvDay=null;renderReservationCalendar()">Tampilkan jadwal mendatang</button>' : '') + '</div>' + list + '</div>' +
+    '<div class="section-title">Data Reservasi</div>';
+}
+function rsvNav(dir) {
+  const now = new Date();
+  if (dir === 0) App.rsvMonth = { y: now.getFullYear(), m: now.getMonth() };
+  else { let m = App.rsvMonth.m + dir, y = App.rsvMonth.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } App.rsvMonth = { y: y, m: m }; }
+  App.rsvDay = null; renderReservationCalendar();
+}
+function rsvPickDay(key) { App.rsvDay = App.rsvDay === key ? null : key; renderReservationCalendar(); }
+
 /* ---------- Export Excel (.xlsx) ---------- */
 function crmToNum_(v) {
   if (v === null || v === undefined || v === '') return 0;
@@ -3561,6 +3730,8 @@ async function renderModulePage(moduleKey) {
     App.grid.reload(data);
     loadSummary(moduleKey);
     if (moduleKey === 'customers') renderCrmWidgets();
+    if (moduleKey === 'leads') renderLeadWidgets();
+    if (moduleKey === 'reservations') renderReservationCalendar();
   } catch (e) {
     App.grid.setLoading(false);
     gridHost.innerHTML = '<div class="alert error-state">⚠️ ' + esc(e.message || 'Terjadi kesalahan saat mengambil data. Silakan coba lagi.') +
@@ -3639,6 +3810,8 @@ async function reloadGrid(moduleKey) {
     App.grid.reload(data);
     loadSummary(moduleKey);
     if (moduleKey === 'customers') renderCrmWidgets();
+    if (moduleKey === 'leads') renderLeadWidgets();
+    if (moduleKey === 'reservations') renderReservationCalendar();
     toast('Data diperbarui.');
   } catch (e) {
     App.grid.setLoading(false);
