@@ -7875,7 +7875,7 @@ function lpShowGuide() {
 }
 
 /* ==================== LEAD FINDER (Google Places) ==================== */
-const LF = { tab: 'cari', st: null, kategori: '', kota: '', onlyWa: true, rows: [], sel: {}, tokens: {}, cities: [], saved: null, sq: '', sstat: '', ssel: {}, busy: false, q: null };
+const LF = { mode: (function() { try { return localStorage.getItem('wmc_lf_mode') === 'osm' ? 'osm' : 'google'; } catch (e) { return 'google'; } })(), tab: 'cari', st: null, kategori: '', kota: '', onlyWa: true, rows: [], sel: {}, tokens: {}, cities: [], saved: null, sq: '', sstat: '', ssel: {}, busy: false, q: null };
 const LF_KATEGORI = ['Sekolah', 'Taman Kanak-kanak', 'Perusahaan', 'Hotel', 'Restoran', 'Kafe', 'Event organizer', 'Komunitas', 'Pabrik', 'Bank', 'Rumah sakit', 'Travel agent', 'Gereja', 'Masjid', 'Universitas'];
 const LF_KOTA = ['Samarinda', 'Balikpapan', 'Bontang', 'Tenggarong', 'Banjarmasin', 'Palangkaraya', 'Pontianak', 'Jakarta', 'Surabaya', 'Makassar'];
 
@@ -7883,7 +7883,7 @@ function renderLeadFinderPage() {
   const c = document.getElementById('pageContainer');
   setPageTitle('Lead Finder');
   c.innerHTML =
-    '<div class="page-head"><div><h2>🧲 Lead Finder</h2><p>Cari calon pelanggan (sekolah, perusahaan, hotel, dll.) dari Google Maps per kota, lengkap dengan nomor HP/WA, lalu jadikan Lead.</p></div></div>' +
+    '<div class="page-head"><div><h2>🧲 Lead Finder</h2><p>Cari calon pelanggan (sekolah, perusahaan, hotel, dll.) per kota dari Google Maps atau OpenStreetMap (gratis), lengkap dengan nomor HP/WA bila tersedia, lalu jadikan Lead.</p></div></div>' +
     '<div id="lfStatus"></div><div id="lfTabs"></div><div id="lfBody"></div>';
   LF.q = null;
   api('apiLeadFinderStatus', App.token).then(function(r) { LF.st = r.data; lfRenderStatus(); }).catch(function(e) { LF.st = null; toast((e && e.message) || 'Gagal memuat status.', 'error'); });
@@ -7892,9 +7892,21 @@ function renderLeadFinderPage() {
 function lfRenderStatus() {
   const h = document.getElementById('lfStatus'); if (!h || !LF.st) return;
   const s = LF.st;
+  if (LF.mode === 'osm') {
+    h.innerHTML = '<div class="alert info-state" style="margin-bottom:12px">🟢 Mode <b>OpenStreetMap</b> — gratis, tanpa kunci API · pencarian hari ini: <b>' + (s.osmUsed || 0) + '/' + (s.osmLimit || 100) + '</b>' +
+      '<div class="form-hint" style="margin-top:4px">Data OpenStreetMap diisi sukarelawan, jadi tidak semua usaha tercatat dan banyak yang belum memuat nomor telepon. Untuk data paling lengkap, gunakan mode Google Places.</div></div>';
+    return;
+  }
   h.innerHTML = '<div class="alert ' + (s.hasKey ? 'info-state' : 'warn') + '" style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px"><div>' +
     (s.hasKey ? '🟢 Google Places API terhubung (' + esc(s.keyHint) + ') · pencarian hari ini: <b>' + s.used + '/' + s.limit + '</b>' : '🔴 Kunci Google Places API belum diatur' + (s.canSetKey ? '.' : ' — minta Admin mengatur.')) + '</div>' +
     (s.canSetKey ? '<button class="btn btn-outline btn-sm" onclick="lfOpenKey()">⚙ Pengaturan</button>' : '') + '</div>';
+}
+function lfSetMode(m) {
+  if (LF.busy || LF.mode === m) return;
+  LF.mode = m;
+  try { localStorage.setItem('wmc_lf_mode', m); } catch (e) {}
+  LF.rows = []; LF.sel = {}; LF.tokens = {};
+  lfRenderStatus(); lfRenderBody();
 }
 function lfRenderTabs() {
   const h = document.getElementById('lfTabs'); if (!h) return;
@@ -7922,13 +7934,16 @@ function lfSaveKey() {
 /* ---- Tab Cari ---- */
 function lfRenderSearch() {
   const h = document.getElementById('lfBody'); if (!h) return;
+  const osm = LF.mode === 'osm';
   h.innerHTML =
+    '<div class="or-tabs" style="margin-bottom:10px">' + [['google', '🗺 Google Places'], ['osm', '🌍 OpenStreetMap (gratis)']].map(function(t) {
+      return '<button class="or-tab' + (LF.mode === t[0] ? ' active' : '') + '" onclick="lfSetMode(\'' + t[0] + '\')">' + t[1] + '</button>'; }).join('') + '</div>' +
     '<div class="card card-pad" style="margin-bottom:12px"><div class="form-row">' +
       '<div class="form-group"><label>Jenis usaha / instansi</label><input class="form-control" id="lfKat" list="lfKatList" placeholder="mis. sekolah dasar" value="' + esc(LF.kategori) + '" onkeydown="if(event.key===\'Enter\')lfSearch(true)"><datalist id="lfKatList">' + LF_KATEGORI.map(function(x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist></div>' +
       '<div class="form-group"><label>Kota (boleh lebih dari satu, pisahkan koma)</label><input class="form-control" id="lfKota" list="lfKotaList" placeholder="mis. Samarinda, Balikpapan" value="' + esc(LF.kota) + '" onkeydown="if(event.key===\'Enter\')lfSearch(true)"><datalist id="lfKotaList">' + LF_KOTA.map(function(x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist></div></div>' +
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn btn-primary" id="lfGo" onclick="lfSearch(true)">🔎 Cari</button>' +
       '<label class="or-check"><input type="checkbox" id="lfOnlyWa"' + (LF.onlyWa ? ' checked' : '') + ' onchange="LF.onlyWa=this.checked;lfRenderResults()"> Hanya yang punya nomor HP/WA</label></div>' +
-      '<div class="form-hint" style="margin-top:6px">Satu pencarian menampilkan sampai 20 hasil per kota; klik “Muat lebih banyak” untuk berikutnya (maks. sekitar 60). Setiap pencarian dihitung ke kuota Google Anda.</div></div>' +
+      (osm ? '<div class="form-hint" style="margin-top:6px">Mode gratis: satu pencarian menampilkan sampai 300 tempat per kota sekaligus. Jenis usaha yang dikenali: sekolah, taman kanak-kanak, universitas, hotel, restoran, kafe, bank, rumah sakit/klinik, gereja, masjid, pabrik, perusahaan/kantor, travel, komunitas, event organizer. Jenis lain dicari berdasarkan nama tempat. Nomor telepon sering kosong, jadi matikan filter “Hanya yang punya nomor” bila hasilnya sedikit.</div>' : '<div class="form-hint" style="margin-top:6px">Satu pencarian menampilkan sampai 20 hasil per kota; klik “Muat lebih banyak” untuk berikutnya (maks. sekitar 60). Setiap pencarian dihitung ke kuota Google Anda.</div>') + '</div>' +
     '<div id="lfBar"></div><div class="card"><div class="grid-table-wrap" id="lfRes"></div><div id="lfMore" style="padding:10px;text-align:center"></div></div>';
   lfRenderResults();
 }
@@ -7949,11 +7964,13 @@ function lfSearch(fresh) {
   const next = function() {
     if (!LF.todo.length) { LF.busy = false; lfSetBusy(false); lfRenderResults(); return Promise.resolve(); }
     const city = LF.todo.shift();
-    return api('apiLeadFinderSearch', App.token, { kategori: LF.kategori, kota: city, pageToken: fresh ? '' : LF.tokens[city] }).then(function(r) {
+    const osm = LF.mode === 'osm';
+    return api(osm ? 'apiLeadFinderSearchOsm' : 'apiLeadFinderSearch', App.token, { kategori: LF.kategori, kota: city, pageToken: (!osm && !fresh) ? LF.tokens[city] : '' }).then(function(r) {
       const seen = {}; LF.rows.forEach(function(x) { seen[x.place_id] = 1; });
       r.data.rows.forEach(function(x) { if (!seen[x.place_id]) { x.kotaCari = city; LF.rows.push(x); } });
       LF.tokens[city] = r.data.nextPageToken || '';
-      if (LF.st) { LF.st.used = r.data.used; lfRenderStatus(); }
+      if (LF.st) { if (osm) { LF.st.osmUsed = r.data.osmUsed; LF.st.osmLimit = r.data.osmLimit; } else LF.st.used = r.data.used; lfRenderStatus(); }
+      if (osm && r.data.mapped === false && fresh && city === LF.cities[0]) toast('Jenis usaha tidak dikenali, jadi dicari berdasarkan nama tempat.');
       lfRenderResults();
       return next();
     });
@@ -7980,7 +7997,7 @@ function lfRenderResults() {
       '<td>' + (r.telepon ? esc(r.telepon) + (r.whatsapp ? ' <span class="badge b-green">HP/WA</span>' : ' <span class="badge b-gray">Telepon</span>') : '<span style="color:#c3c6cf">—</span>') +
         (r.exists === 'TERSIMPAN' ? '<div><span class="badge b-blue">Sudah tersimpan</span></div>' : r.exists === 'SUDAH_CRM' ? '<div><span class="badge b-amber">Sudah di CRM</span></div>' : '') + '</td>' +
       '<td>' + (r.rating ? '⭐ ' + r.rating + ' <span class="or-sub">(' + r.ulasan + ')</span>' : '—') + '</td>' +
-      '<td>' + (r.maps_url ? '<a href="' + esc(r.maps_url) + '" target="_blank" rel="noopener noreferrer">Maps ↗</a>' : '') + '</td></tr>';
+      '<td>' + (r.maps_url ? '<a href="' + esc(r.maps_url) + '" target="_blank" rel="noopener noreferrer">' + (String(r.maps_url).indexOf('openstreetmap.org') > 0 ? 'OSM' : 'Maps') + ' ↗</a>' : '') + '</td></tr>';
   });
   host.innerHTML = h + '</tbody></table>';
   const more = Object.keys(LF.tokens).some(function(k) { return LF.tokens[k]; });
@@ -8041,7 +8058,7 @@ function lfRenderSavedTable() {
   rows.slice(0, 300).forEach(function(r) {
     h += '<tr><td class="col-check"><input type="checkbox" ' + (LF.ssel[r.finder_id] ? 'checked ' : '') + 'onchange="lfSToggle(\'' + esc(r.finder_id) + '\',this.checked)"></td><td><b>' + esc(r.nama) + '</b><div class="or-sub">' + esc(r.alamat) + '</div></td><td>' + esc(r.kota) + '</td><td>' + esc(r.kategori) + '</td>' +
       '<td>' + esc(r.telepon || '—') + (r.whatsapp ? ' <span class="badge b-green">HP/WA</span>' : '') + '</td><td><span class="badge ' + (r.status === 'DIJADIKAN LEAD' ? 'b-green' : r.status === 'SUDAH ADA' ? 'b-amber' : 'b-blue') + '">' + esc(r.status) + '</span>' + (r.lead_id ? '<div class="or-sub">' + esc(r.lead_id) + '</div>' : '') + '</td>' +
-      '<td>' + (r.maps_url ? '<a href="' + esc(r.maps_url) + '" target="_blank" rel="noopener noreferrer">Maps ↗</a>' : '') + '</td></tr>';
+      '<td>' + (r.maps_url ? '<a href="' + esc(r.maps_url) + '" target="_blank" rel="noopener noreferrer">' + (String(r.maps_url).indexOf('openstreetmap.org') > 0 ? 'OSM' : 'Maps') + ' ↗</a>' : '') + '</td></tr>';
   });
   host.innerHTML = h + '</tbody></table>' + (rows.length > 300 ? '<div class="form-hint" style="padding:8px">Menampilkan 300 pertama; gunakan pencarian untuk mempersempit.</div>' : '');
 }
