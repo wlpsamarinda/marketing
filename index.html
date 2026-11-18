@@ -1264,6 +1264,7 @@ function DataGrid(container, opts) {
     reload: function(data) { state.loading = false; state.data = data || []; state.page = 1; state.selected = {}; render(); },
     getData: function() { return state.data; },
     setFilter: function(k, v) { state.filters[k] = String(v); state.page = 1; render(); },
+    setSearch: function(v) { state.search = String(v || ''); state.page = 1; render(); },
     getFiltered: function() { return getFiltered(); }
   };
 }
@@ -3319,6 +3320,7 @@ function renderLeadWidgets() {
     });
     table += '</tbody></table></div>';
   }
+  const todayHtml = leadTodayWidget_(all);
   host.innerHTML = '<div class="cards-row grid-5">' +
     statCard('Total Lead', fmtNum(total), perOpts ? LEAD_PERIODS.filter(function(p) { return p[0] === App.leadPeriod; })[0][1] : '', '🧲', 'ico-violet') +
     statCard('Lead Baru (NEW)', fmtNum(baru), 'Belum dihubungi / belum diproses', '🆕', 'ico-blue') +
@@ -3326,10 +3328,77 @@ function renderLeadWidgets() {
     statCard('Reserved', fmtNum(res), total ? Math.round(res / total * 1000) / 10 + '% konversi · Lost ' + fmtNum(lost) : '', '✅', 'ico-green') +
     statCard('Sumber Terbanyak', top ? esc(top.k) : '—', top ? fmtNum(top.n) + ' lead · potensi ' + fmtIDR(potensi) : '', '🏆', 'ico-rose') +
   '</div>' +
+  todayHtml +
   '<div class="card card-pad" style="margin-bottom:14px"><div class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="dot"></span>📊 Lead per Sumber' +
     '<span style="margin-left:auto"><select class="form-control" style="width:auto;padding:5px 8px" onchange="App.leadPeriod=this.value;renderLeadWidgets()">' + perOpts + '</select></span></div>' + table + '</div>' +
   '<div class="section-title">Data Leads</div>';
 }
+/* ---- Widget: Lead Masuk Hari Ini ---- */
+function leadDateKey_(r) { return String(r.tanggal || r.created_at || '').substring(0, 10); }
+function leadTodayRows_(all) {
+  const t = todayStr();
+  return all.filter(function(r) { return leadDateKey_(r) === t; }).sort(function(a, b) {
+    const ca = String(a.created_at || ''), cb = String(b.created_at || '');
+    if (ca !== cb) return cb.localeCompare(ca);
+    return String(b.lead_id || '').localeCompare(String(a.lead_id || ''));
+  });
+}
+function leadTodayWidget_(all) {
+  const rows = leadTodayRows_(all);
+  const MAX = 10;
+  const T = function(r) { return String(r.tahap || '').toUpperCase(); };
+  let list;
+  if (!rows.length) list = '<div class="grid-empty" style="padding:16px">Belum ada lead masuk hari ini.</div>';
+  else {
+    list = '<div style="max-height:340px;overflow:auto">';
+    rows.slice(0, MAX).forEach(function(r) {
+      const ph = crmPhoneLocal_(r.whatsapp);
+      const jam = /\d{1,2}:\d{2}/.test(String(r.created_at || '')) ? String(r.created_at).match(/(\d{1,2}:\d{2})/)[1] : '';
+      const need = String(r.kebutuhan || '').replace(/\s+/g, ' ').trim();
+      const sumber = String(r.sumber || '').trim() || 'Tanpa sumber';
+      const t = T(r);
+      list += '<div class="lt-row" style="display:flex;align-items:center;gap:10px;padding:9px 6px;border-bottom:1px solid var(--border,#e5e7eb);cursor:pointer" title="Klik untuk membuka di daftar leads" onclick="leadTodayOpen(\'' + esc(String(r.lead_id || '')).replace(/'/g, '&#39;') + '\')">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><b>' + esc(r.nama || '—') + '</b>' +
+            '<span class="badge b-blue">' + esc(sumber) + '</span>' +
+            (t ? '<span class="badge ' + (t === 'NEW' ? 'b-gray' : t === 'RESERVED' ? 'b-green' : t === 'LOST' ? 'b-red' : 'b-amber') + '">' + esc(t) + '</span>' : '') +
+            (jam ? '<small style="color:#6b7280">' + esc(jam) + '</small>' : '') + '</div>' +
+          '<div style="font-size:12px;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(ph || 'Tanpa nomor') + (need ? ' · ' + esc(need.length > 70 ? need.substring(0, 70) + '…' : need) : '') + '</div>' +
+        '</div>' +
+        (ph ? '<button class="btn btn-outline btn-sm" style="flex:none" title="Buka chat WhatsApp" onclick="event.stopPropagation();leadTodayWa(\'' + esc(String(r.lead_id || '')).replace(/'/g, '&#39;') + '\')">💬 WA</button>' : '') +
+      '</div>';
+    });
+    list += '</div>';
+    if (rows.length > MAX) list += '<div style="padding:8px 6px;font-size:12px;color:#6b7280">+ ' + fmtNum(rows.length - MAX) + ' lead lainnya hari ini. Klik "Lihat semua di daftar".</div>';
+  }
+  return '<div class="card card-pad" style="margin-bottom:14px"><div class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="dot"></span>🆕 Lead Masuk Hari Ini <span class="badge b-violet">' + fmtNum(rows.length) + '</span>' +
+    '<span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">' +
+      '<button class="btn btn-outline btn-sm" onclick="leadTodayAll()">📋 Lihat semua di daftar</button>' +
+      '<a class="btn btn-outline btn-sm" href="https://web.whatsapp.com/" target="_blank" rel="noopener">💬 Buka WhatsApp Web</a>' +
+    '</span></div>' + list + '</div>';
+}
+function leadTodayScroll_() {
+  const g = document.getElementById('gridHost');
+  if (g && g.scrollIntoView) g.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function leadTodayOpen(id) {
+  if (!App.grid || !App.grid.setSearch) return;
+  if (App.grid.setFilter) App.grid.setFilter('sumber', '');
+  App.grid.setSearch(id);
+  leadTodayScroll_();
+}
+function leadTodayAll() {
+  if (!App.grid || !App.grid.setSearch) return;
+  if (App.grid.setFilter) App.grid.setFilter('sumber', '');
+  App.grid.setSearch(todayStr());
+  leadTodayScroll_();
+}
+function leadTodayWa(id) {
+  const r = (App.grid ? App.grid.getData() : []).filter(function(x) { return String(x.lead_id) === String(id); })[0];
+  if (!r || !crmPhoneLocal_(r.whatsapp)) { toast('Nomor WhatsApp lead belum ada.', 'error'); return; }
+  window.open(orWaUrl(r.whatsapp, ''), '_blank', 'noopener');
+}
+
 function leadFilterSumber(k) {
   if (App.grid && App.grid.setFilter) App.grid.setFilter('sumber', k);
 }
