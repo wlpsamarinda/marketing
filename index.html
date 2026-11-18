@@ -1026,6 +1026,7 @@ function DataGrid(container, opts) {
       const f = state.filters[k];
       if (f) rows = rows.filter(function(r) { return String(r[k]) === String(f); });
     });
+    if (state.pred) rows = rows.filter(state.pred);
     if (state.sortKey) {
       const key = state.sortKey, dir = state.sortDir;
       rows.sort(function(a, b) {
@@ -1091,7 +1092,7 @@ function DataGrid(container, opts) {
           esc(c.label) +
           (state.sortKey === c.key ? '<span class="sort-arrow">' + (state.sortDir === 1 ? '▲' : '▼') + '</span>' : '') + '</th>';
       });
-      if ((canManage && (opts.actions.onEdit || opts.actions.onDelete)) || opts.actions.onView) thead += '<th style="width:' + (opts.actions.rowButtons ? 130 : 90) + 'px">Aksi</th>';
+      if ((canManage && (opts.actions.onEdit || opts.actions.onDelete)) || opts.actions.onView) thead += '<th style="width:' + (opts.actions.rowButtons ? (opts.actions.rowButtons.length > 2 ? 170 : 130) : 90) + 'px">Aksi</th>';
       thead += '</tr>';
 
       let tbody = '';
@@ -1265,6 +1266,7 @@ function DataGrid(container, opts) {
     getData: function() { return state.data; },
     setFilter: function(k, v) { state.filters[k] = String(v); state.page = 1; render(); },
     setSearch: function(v) { state.search = String(v || ''); state.page = 1; render(); },
+    setPredicate: function(fn) { state.pred = fn || null; state.page = 1; render(); },
     getFiltered: function() { return getFiltered(); }
   };
 }
@@ -3399,6 +3401,114 @@ function leadTodayWa(id) {
   window.open(orWaUrl(r.whatsapp, ''), '_blank', 'noopener');
 }
 
+/* ==================== LINK WHATSAPP WEB DI SEMUA DAFTAR ==================== */
+const WA_MODULES = ['customers', 'leads', 'followups', 'reservations', 'participants'];
+function waWrapButtons_(moduleKey, base) {
+  if (WA_MODULES.indexOf(moduleKey) < 0) return base;
+  const direct = moduleKey === 'customers' || moduleKey === 'leads';
+  const btn = {
+    icon: '💬', title: 'Buka WhatsApp Web',
+    show: direct ? function(row) { return !!crmPhoneLocal_(row.whatsapp); } : null,
+    onClick: function(row) { waOpenRow_(moduleKey, row); }
+  };
+  return [btn].concat(base || []);
+}
+// Peta nomor dari Pelanggan & Leads (untuk Follow-up/Reservasi yang tidak menyimpan nomor sendiri)
+async function waPhoneMap_() {
+  const now = Date.now();
+  if (App.waMap && now - App.waMap.t < 120000) return App.waMap;
+  const m = { t: now, cust: {}, lead: {} };
+  const get = async function(mod) { try { const r = await api('apiGetRecords', App.token, mod); return r.data || []; } catch (e) { return []; } };
+  const both = await Promise.all([get('customers'), get('leads')]);
+  both[0].forEach(function(c) { if (c.customer_id) m.cust[c.customer_id] = c.whatsapp; });
+  both[1].forEach(function(l) { if (l.lead_id) m.lead[l.lead_id] = { wa: l.whatsapp, crm: l.crm_id }; });
+  App.waMap = m;
+  return m;
+}
+async function waResolvePhone_(moduleKey, row) {
+  if (crmPhoneLocal_(row.whatsapp)) return row.whatsapp;
+  const m = await waPhoneMap_();
+  const L = row.lead_id ? m.lead[row.lead_id] : null;
+  const cands = [];
+  if (L) { cands.push(L.wa); if (L.crm) cands.push(m.cust[L.crm]); }
+  [row.crm_id, row.customer_id].forEach(function(id) { if (id) cands.push(m.cust[id]); });
+  for (let i = 0; i < cands.length; i++) if (crmPhoneLocal_(cands[i])) return cands[i];
+  return '';
+}
+async function waOpenRow_(moduleKey, row) {
+  const ph = await waResolvePhone_(moduleKey, row);
+  if (!ph) { toast('Nomor WhatsApp untuk data ini belum ada.', 'error'); return; }
+  window.open(orWaUrl(ph, ''), '_blank', 'noopener');
+}
+
+/* ==================== FOLLOW-UP JATUH TEMPO ==================== */
+function fuDueRows_(all) {
+  const t = todayStr();
+  return all.filter(function(r) {
+    return String(r.status || '').toUpperCase() === 'TERJADWAL' && String(r.tanggal || '').substring(0, 10) && String(r.tanggal).substring(0, 10) <= t;
+  }).sort(function(a, b) { return String(a.tanggal).localeCompare(String(b.tanggal)); });
+}
+function fuDaysLate_(r) {
+  const a = new Date(String(r.tanggal).substring(0, 10) + 'T00:00:00'), b = new Date(todayStr() + 'T00:00:00');
+  return Math.round((b - a) / 86400000);
+}
+function fuLabel_(r) {
+  const L = (App.lookups.leads || []).filter(function(x) { return String(x.id) === String(r.lead_id); })[0];
+  if (L && L.nama) return L.nama;
+  const id = r.customer_id || r.crm_id;
+  const C = (App.lookups.customers || []).filter(function(x) { return String(x.id) === String(id); })[0];
+  return C && C.nama ? C.nama : String(r.lead_id || id || '—');
+}
+function renderFollowupWidgets() {
+  const host = document.getElementById('summaryHost');
+  if (!host || App.currentRoute !== 'followups' || !App.grid) return;
+  const rows = fuDueRows_(App.grid.getData());
+  const today = rows.filter(function(r) { return fuDaysLate_(r) === 0; }).length;
+  const late = rows.length - today;
+  const MAX = 10;
+  let list;
+  if (!rows.length) list = '<div class="grid-empty" style="padding:16px">✅ Tidak ada follow up yang jatuh tempo hari ini.</div>';
+  else {
+    list = '<div style="max-height:340px;overflow:auto">';
+    rows.slice(0, MAX).forEach(function(r) {
+      const d = fuDaysLate_(r);
+      list += '<div style="display:flex;align-items:center;gap:10px;padding:9px 6px;border-bottom:1px solid var(--border,#e5e7eb);cursor:pointer" title="Klik untuk membuka di daftar follow up" onclick="fuDueOpen(\'' + esc(String(r.followup_id || '')).replace(/'/g, '&#39;') + '\')">' +
+        '<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><b>' + esc(fuLabel_(r)) + '</b>' +
+        '<span class="badge ' + (d === 0 ? 'b-amber' : 'b-red') + '">' + (d === 0 ? 'Hari ini' : 'Terlambat ' + d + ' hari') + '</span>' +
+        (r.jenis ? '<span class="badge b-blue">' + esc(r.jenis) + '</span>' : '') + '</div>' +
+        '<div style="font-size:12px;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(String(r.tanggal).substring(0, 10)) + (r.PIC ? ' · PIC ' + esc(r.PIC) : '') + (r.tindak_lanjut ? ' · ' + esc(String(r.tindak_lanjut).substring(0, 60)) : '') + '</div></div>' +
+        '<button class="btn btn-outline btn-sm" style="flex:none" title="Buka chat WhatsApp" onclick="event.stopPropagation();fuDueWa(\'' + esc(String(r.followup_id || '')).replace(/'/g, '&#39;') + '\')">💬 WA</button></div>';
+    });
+    list += '</div>';
+    if (rows.length > MAX) list += '<div style="padding:8px 6px;font-size:12px;color:#6b7280">+ ' + fmtNum(rows.length - MAX) + ' follow up lainnya. Klik "Lihat semua jatuh tempo".</div>';
+  }
+  host.innerHTML = '<div class="card card-pad" style="margin-bottom:14px"><div class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="dot"></span>⏰ Follow Up Jatuh Tempo ' +
+    '<span class="badge ' + (rows.length ? 'b-red' : 'b-green') + '">' + fmtNum(rows.length) + '</span>' +
+    (rows.length ? '<small style="color:#6b7280">Hari ini ' + fmtNum(today) + ' · Terlambat ' + fmtNum(late) + '</small>' : '') +
+    '<span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">' +
+      (App.fuDueOnly ? '<button class="btn btn-outline btn-sm" onclick="fuDueAll(false)">Tampilkan semua follow up</button>' : '<button class="btn btn-outline btn-sm" onclick="fuDueAll(true)">📋 Lihat semua jatuh tempo</button>') +
+      '<a class="btn btn-outline btn-sm" href="https://web.whatsapp.com/" target="_blank" rel="noopener">💬 Buka WhatsApp Web</a>' +
+    '</span></div>' + list + '</div><div class="section-title">Data Follow-up</div>';
+}
+function fuDueScroll_() { const g = document.getElementById('gridHost'); if (g && g.scrollIntoView) g.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+function fuDueOpen(id) {
+  if (!App.grid) return;
+  App.fuDueOnly = false; App.grid.setPredicate(null);
+  App.grid.setFilter('status', ''); App.grid.setSearch(id);
+  renderFollowupWidgets(); fuDueScroll_();
+}
+function fuDueAll(on) {
+  if (!App.grid) return;
+  App.fuDueOnly = !!on;
+  App.grid.setFilter('status', ''); App.grid.setSearch('');
+  App.grid.setPredicate(on ? function(r) { return fuDueRows_([r]).length === 1; } : null);
+  renderFollowupWidgets(); if (on) fuDueScroll_();
+}
+function fuDueWa(id) {
+  const r = (App.grid ? App.grid.getData() : []).filter(function(x) { return String(x.followup_id) === String(id); })[0];
+  if (r) waOpenRow_('followups', r);
+}
+
 function leadFilterSumber(k) {
   if (App.grid && App.grid.setFilter) App.grid.setFilter('sumber', k);
 }
@@ -3740,7 +3850,7 @@ async function renderModulePage(moduleKey) {
       onDelete: function(id) { deleteRecord(moduleKey, id); },
       onBulkDelete: function(ids) { bulkDeleteRecords(moduleKey, ids); },
       onRefresh: function() { reloadGrid(moduleKey); },
-      rowButtons: moduleKey === 'landingpages' ? [{
+      rowButtons: waWrapButtons_(moduleKey, moduleKey === 'landingpages' ? [{
         icon: '🔗', title: 'Salin link publik',
         onClick: function(row) { copyText_(row.public_url, 'Link publik disalin.'); }
       }, {
@@ -3757,7 +3867,7 @@ async function renderModulePage(moduleKey) {
         icon: '✔️', title: 'Check-in (hadir)',
         show: function(row) { return String(row.status_kehadiran) !== 'HADIR'; },
         onClick: function(row) { participantCheckin(row); }
-      }] : null,
+      }] : null),
       toolbarButtons: moduleKey === 'participants' ? [{
         cls: 'btn-primary', title: 'Masukkan peserta ke CRM (yang dipilih, atau semua yang belum masuk CRM)',
         label: function(n) { return n > 0 ? '➕ Tambahkan ke CRM (' + n + ')' : '➕ Tambahkan Semua ke CRM'; },
@@ -3801,6 +3911,7 @@ async function renderModulePage(moduleKey) {
     if (moduleKey === 'customers') renderCrmWidgets();
     if (moduleKey === 'leads') renderLeadWidgets();
     if (moduleKey === 'reservations') renderReservationCalendar();
+    if (moduleKey === 'followups') { App.fuDueOnly = false; renderFollowupWidgets(); }
   } catch (e) {
     App.grid.setLoading(false);
     gridHost.innerHTML = '<div class="alert error-state">⚠️ ' + esc(e.message || 'Terjadi kesalahan saat mengambil data. Silakan coba lagi.') +
@@ -3881,6 +3992,7 @@ async function reloadGrid(moduleKey) {
     if (moduleKey === 'customers') renderCrmWidgets();
     if (moduleKey === 'leads') renderLeadWidgets();
     if (moduleKey === 'reservations') renderReservationCalendar();
+    if (moduleKey === 'followups') renderFollowupWidgets();
     toast('Data diperbarui.');
   } catch (e) {
     App.grid.setLoading(false);
