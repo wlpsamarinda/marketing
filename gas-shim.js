@@ -30,7 +30,9 @@
       return;
     }
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, cfg.TIMEOUT_MS || 60000) : null;
+    // Pencarian OpenStreetMap lewat server gratis bisa memakan waktu 1-4 menit
+    var LONG = { apiLeadFinderSearchOsm: 290000 };
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, LONG[fn] || cfg.TIMEOUT_MS || 60000) : null;
     fetch(cfg.GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },

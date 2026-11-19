@@ -7943,7 +7943,7 @@ function lfRenderSearch() {
       '<div class="form-group"><label>Kota (boleh lebih dari satu, pisahkan koma)</label><input class="form-control" id="lfKota" list="lfKotaList" placeholder="mis. Samarinda, Balikpapan" value="' + esc(LF.kota) + '" onkeydown="if(event.key===\'Enter\')lfSearch(true)"><datalist id="lfKotaList">' + LF_KOTA.map(function(x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist></div></div>' +
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn btn-primary" id="lfGo" onclick="lfSearch(true)">🔎 Cari</button>' +
       '<label class="or-check"><input type="checkbox" id="lfOnlyWa"' + (LF.onlyWa ? ' checked' : '') + ' onchange="LF.onlyWa=this.checked;lfRenderResults()"> Hanya yang punya nomor HP/WA</label></div>' +
-      (osm ? '<div class="form-hint" style="margin-top:6px">Mode gratis: satu pencarian menampilkan sampai 300 tempat per kota sekaligus. Jenis usaha yang dikenali: sekolah, taman kanak-kanak, universitas, hotel, restoran, kafe, bank, rumah sakit/klinik, gereja, masjid, pabrik, perusahaan/kantor, travel, komunitas, event organizer. Jenis lain dicari berdasarkan nama tempat. Nomor telepon sering kosong, jadi matikan filter “Hanya yang punya nomor” bila hasilnya sedikit.</div>' : '<div class="form-hint" style="margin-top:6px">Satu pencarian menampilkan sampai 20 hasil per kota; klik “Muat lebih banyak” untuk berikutnya (maks. sekitar 60). Setiap pencarian dihitung ke kuota Google Anda.</div>') + '</div>' +
+      (osm ? '<div class="form-hint" style="margin-top:6px">Mode gratis: satu pencarian menampilkan sampai 300 tempat per kota sekaligus. Jenis usaha yang dikenali: sekolah, taman kanak-kanak, universitas, hotel, restoran, kafe, bank, rumah sakit/klinik, gereja, masjid, pabrik, perusahaan/kantor, travel, komunitas, event organizer. Jenis lain dicari berdasarkan nama tempat. Server gratis ini lambat: pencarian pertama bisa memakan 1–4 menit (jangan tutup halaman); hasil yang sama disimpan 6 jam. Nomor telepon sering kosong, jadi matikan filter “Hanya yang punya nomor” bila hasilnya sedikit.</div>' : '<div class="form-hint" style="margin-top:6px">Satu pencarian menampilkan sampai 20 hasil per kota; klik “Muat lebih banyak” untuk berikutnya (maks. sekitar 60). Setiap pencarian dihitung ke kuota Google Anda.</div>') + '</div>' +
     '<div id="lfBar"></div><div class="card"><div class="grid-table-wrap" id="lfRes"></div><div id="lfMore" style="padding:10px;text-align:center"></div></div>';
   lfRenderResults();
 }
@@ -7970,6 +7970,7 @@ function lfSearch(fresh) {
       r.data.rows.forEach(function(x) { if (!seen[x.place_id]) { x.kotaCari = city; LF.rows.push(x); } });
       LF.tokens[city] = r.data.nextPageToken || '';
       if (LF.st) { if (osm) { LF.st.osmUsed = r.data.osmUsed; LF.st.osmLimit = r.data.osmLimit; } else LF.st.used = r.data.used; lfRenderStatus(); }
+      if (osm && r.data.via === 'nominatim' && fresh && city === LF.cities[0]) toast('Server Overpass tidak terjangkau; memakai pencarian cadangan (maksimal 40 hasil per pencarian).');
       if (osm && r.data.mapped === false && fresh && city === LF.cities[0]) toast('Jenis usaha tidak dikenali, jadi dicari berdasarkan nama tempat.');
       lfRenderResults();
       return next();
