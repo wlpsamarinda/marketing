@@ -2077,9 +2077,11 @@ const MODULE_CONFIG = {
         options: [{ value: 'LEAD', label: 'Lead Capture' }, { value: 'RESERVASI', label: 'Reservasi Online' }, { value: 'EVENT', label: 'Registrasi Event' }] },
       { key: 'judul', label: 'Judul', required: true, full: true },
       { key: 'deskripsi', label: 'Deskripsi', type: 'textarea', full: true },
-      { key: 'banner_url', label: 'Banner / Foto (URL)', full: true, hint: 'Link gambar (Google Drive "siapa saja yang memiliki link" atau URL gambar langsung).' },
+      { key: 'banner_url', label: 'Banner Halaman (unggah foto)', type: 'image', full: true, hint: 'Unggah foto JPG atau PNG, otomatis diperkecil. Kosongkan untuk memakai banner bawaan (Pengaturan Tampilan di atas). Link gambar lama tetap berfungsi.' },
       { key: 'penawaran', label: 'Penawaran / Promo', type: 'textarea', full: true, hint: 'Ditampilkan sebagai kotak penawaran menarik di halaman publik.' },
       { key: 'cta_label', label: 'Label Tombol (CTA)', defaultValue: 'Kirim' },
+      { key: 'sukses_judul', label: 'Judul Ucapan Setelah Kirim', full: true, placeholder: 'mis. Terima kasih, {nama}!', hint: 'Judul di halaman terakhir setelah orang mengirim data. Kosongkan = teks bawaan. Bisa memakai {nama}, {kode}, {judul}.' },
+      { key: 'sukses_pesan', label: 'Pesan Ucapan Setelah Kirim', type: 'textarea', full: true, placeholder: 'mis. Data Anda sudah kami terima. Tunjukkan kode di bawah ke kasir untuk klaim tiket gratis ulang tahun.', hint: 'Pesan yang muncul setelah orang mengirim data. Kosongkan = teks bawaan sesuai tipe halaman. Baris baru dipertahankan. Bisa memakai {nama}, {kode}, {judul}.' },
       { key: 'source', label: 'Source (sumber data)', defaultValue: 'Landing Page', hint: 'Tercatat sebagai Sumber pada Lead / CRM yang masuk.' },
       { key: 'campaign_id', label: 'Campaign (opsional)', type: 'select', dynamic: 'campaigns' },
       { key: 'event_id', label: 'Event (wajib utk tipe EVENT)', type: 'select', dynamic: 'events' },
@@ -3925,7 +3927,7 @@ function loadSummary(moduleKey) {
   if (!cfg || !cfg.summary) return;
   api(cfg.summary.api, App.token).then(function(res) {
     const host = document.getElementById('summaryHost');
-    if (host && App.currentRoute === moduleKey) host.innerHTML = cfg.summary.render(res.data);
+    if (host && App.currentRoute === moduleKey) { host.innerHTML = cfg.summary.render(res.data); orHydrateImgs(host); }
   }).catch(function() { /* ringkasan bersifat tambahan; tabel tetap berfungsi */ });
 }
 function miniTable(columns, rows) {
@@ -7714,6 +7716,8 @@ function openLandingEditor(row) {
       if (v !== '' && !opts.some(function(o) { return String(o.value) === String(v); })) opts.push({ value: v, label: v + ' (tidak ada di daftar)' });
       c = '<select class="form-control" data-lk="' + f.key + '"><option value="">— Pilih —</option>' + opts.map(function(o) {
         return '<option value="' + esc(o.value) + '"' + (String(o.value) === String(v) ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('') + '</select>';
+    } else if (f.type === 'image') {
+      c = lpImgWidget_('data-lk="' + f.key + '"', v, 'banner');
     } else if (f.type === 'textarea') {
       c = '<textarea class="form-control" rows="2" data-lk="' + f.key + '">' + esc(v) + '</textarea>';
     } else {
@@ -7748,6 +7752,7 @@ function openLandingEditor(row) {
   if (slugEl) slugEl.addEventListener('input', prev);
   prev();
   if (!App.landingExec) api('apiLandingGetSettings', App.token).then(function(r) { App.landingBase = r.data.base_url; App.landingExec = r.data.exec_url; prev(); }).catch(function() {});
+  orHydrateImgs(root);
   root.querySelector('[data-lk="tipe"]').addEventListener('change', function(e) {
     LB.tipe = e.target.value;
     if (!LB.dirty) { LB.fields = lbDefaults(LB.tipe); lbRender(); }
@@ -7815,10 +7820,97 @@ function renderLandingSettings(d) {
     '<button class="btn btn-primary" onclick="lpSaveBase()">Simpan</button>' +
     '<button class="btn btn-outline" onclick="lpShowGuide()">📘 Panduan &amp; Kode Proxy</button></div>' +
     '<div class="form-hint" style="margin-top:6px">Link bawaan saat ini: <code>' + esc(App.landingExec || '(belum tersedia — deploy sebagai Web App)') + '?page=&lt;slug&gt;</code></div></div>' +
+    renderBrandSettings_(d.brand || {}) +
     renderSocialSettings_(d.social || {});
 }
 const SOC_PLATFORMS = [['instagram', '📸 Instagram', 'https://instagram.com/akunanda  atau cukup  akunanda'], ['tiktok', '🎵 TikTok', 'https://tiktok.com/@akunanda  atau cukup  akunanda'],
   ['facebook', '👍 Facebook', 'https://facebook.com/namahalaman'], ['youtube', '▶️ YouTube', 'https://youtube.com/@namachannel']];
+/* ---- Unggah gambar landing page: banner & logo (JPG / PNG) ---- */
+function lpResizeImage(file, o) {
+  return new Promise(function(resolve, reject) {
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return reject(new Error('Gunakan gambar JPG atau PNG.'));
+    const fr = new FileReader();
+    fr.onerror = function() { reject(new Error('Gagal membaca file.')); };
+    fr.onload = function() {
+      const im = new Image();
+      im.onerror = function() { reject(new Error('File bukan gambar yang valid.')); };
+      im.onload = function() {
+        const png = !!o.keepAlpha && file.type === 'image/png';   // logo PNG tetap transparan
+        let side = o.maxSide, q = 0.86, out = '';
+        for (let n = 0; n < 9; n++) {
+          const sc = Math.min(1, side / Math.max(im.naturalWidth, im.naturalHeight));
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(im.naturalWidth * sc)); c.height = Math.max(1, Math.round(im.naturalHeight * sc));
+          const ctx = c.getContext('2d');
+          if (!png) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); }
+          ctx.drawImage(im, 0, 0, c.width, c.height);
+          out = png ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', q);
+          if (out.length - 30 <= 400000) return resolve(out);
+          q = Math.max(0.5, q - 0.07); side = Math.round(side * 0.85);
+        }
+        reject(new Error('Gambar terlalu besar. Gunakan gambar yang lebih kecil.'));
+      };
+      im.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+// attr = atribut penanda input tersembunyi, mis. 'data-lk="banner_url"' atau 'id="lpb_logo"'
+function lpImgWidget_(attr, ref, kind) {
+  const logo = kind === 'logo';
+  const prevStyle = logo ? 'width:84px;height:84px;object-fit:contain;background:#f3f4f6;border-radius:12px;border:1px solid var(--border)'
+    : 'width:100%;max-width:420px;max-height:150px;object-fit:cover;border-radius:12px;border:1px solid var(--border)';
+  return '<div class="lp-img" data-kind="' + kind + '">' +
+    '<input type="hidden" class="lp-img-val" ' + attr + ' value="' + esc(ref || '') + '">' +
+    '<div class="lp-img-prev" style="margin-bottom:8px">' + (ref ? orImgTag(ref, prevStyle) : '<div class="form-hint">Belum ada gambar.</div>') + '</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap"><label class="btn btn-outline btn-sm" style="cursor:pointer">📷 ' + (logo ? 'Pilih Logo' : 'Pilih Foto') +
+    '<input type="file" accept="image/jpeg,image/png" style="display:none" onchange="lpImgChosen(this)"></label>' +
+    '<button type="button" class="btn btn-outline btn-sm" onclick="lpImgClear(this)">✕ Hapus</button></div>' +
+    '<div class="form-hint" style="margin-top:4px">' + (logo ? 'JPG atau PNG (PNG transparan didukung). Disarankan gambar persegi.' : 'JPG atau PNG. Disarankan gambar lebar (rasio sekitar 3:1), mis. 1600×530.') + '</div></div>';
+}
+function lpImgChosen(inp) {
+  const box = inp.closest('.lp-img'); const file = inp.files && inp.files[0];
+  if (!box || !file) return;
+  const logo = box.getAttribute('data-kind') === 'logo';
+  showLoading('Mengunggah gambar...');
+  let dataUrl = '';
+  lpResizeImage(file, logo ? { maxSide: 320, keepAlpha: true } : { maxSide: 1600, keepAlpha: false }).then(function(d) {
+    dataUrl = d;
+    return api('apiLandingUploadImage', App.token, d, file.name);
+  }).then(function(r) {
+    hideLoading();
+    box.querySelector('.lp-img-val').value = r.data.ref;
+    const prev = box.querySelector('.lp-img-prev');
+    prev.innerHTML = '<img src="' + dataUrl + '" alt="" style="' + (logo ? 'width:84px;height:84px;object-fit:contain;background:#f3f4f6;border-radius:12px;border:1px solid var(--border)' : 'width:100%;max-width:420px;max-height:150px;object-fit:cover;border-radius:12px;border:1px solid var(--border)') + '">';
+    toast('Gambar terunggah. Klik Simpan agar tampil di halaman publik.');
+  }).catch(function(e) { hideLoading(); toast((e && e.message) || 'Gagal mengunggah gambar.', 'error'); })
+    .then(function() { inp.value = ''; });
+}
+function lpImgClear(btn) {
+  const box = btn.closest('.lp-img'); if (!box) return;
+  box.querySelector('.lp-img-val').value = '';
+  box.querySelector('.lp-img-prev').innerHTML = '<div class="form-hint">Belum ada gambar.</div>';
+}
+function renderBrandSettings_(b) {
+  return '<div class="card card-pad" style="margin-bottom:16px"><div class="card-title"><span class="dot"></span>Tampilan Halaman Publik (nama, logo &amp; banner bawaan)</div>' +
+    '<div class="form-hint" style="margin-bottom:10px">Ini tampil di bagian atas <b>semua</b> landing page. Banner yang diunggah di tiap landing page menggantikan banner bawaan ini.</div>' +
+    '<div class="form-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:0 12px">' +
+      '<div class="form-group"><label>Nama brand</label><input class="form-control" id="lpb_nama" maxlength="80" value="' + esc(b.nama || '') + '" placeholder="Wonderland Samarinda"></div>' +
+      '<div class="form-group"><label>Tagline (di bawah nama)</label><input class="form-control" id="lpb_tagline" maxlength="120" value="' + esc(b.tagline || '') + '" placeholder="Theme Park &amp; Recreation"></div>' +
+      '<div class="form-group" style="grid-column:1/-1"><label>Teks footer (bawah halaman)</label><input class="form-control" id="lpb_footer" maxlength="150" value="' + esc(b.footer || '') + '" placeholder="Kosongkan = © nama brand"></div>' +
+      '<div class="form-group"><label>Logo</label>' + lpImgWidget_('id="lpb_logo"', b.logo || '', 'logo') + '</div>' +
+      '<div class="form-group"><label>Banner bawaan</label>' + lpImgWidget_('id="lpb_banner"', b.banner || '', 'banner') + '</div>' +
+    '</div><button class="btn btn-primary" onclick="lpSaveBrand()">Simpan Tampilan</button></div>';
+}
+function lpSaveBrand() {
+  const g = function(id) { const e = document.getElementById(id); return e ? e.value : ''; };
+  const cfg = { nama: g('lpb_nama'), tagline: g('lpb_tagline'), footer: g('lpb_footer'), logo: g('lpb_logo'), banner: g('lpb_banner') };
+  showLoading('Menyimpan...');
+  api('apiLandingSaveBrand', App.token, cfg).then(function(res) {
+    hideLoading(); toast(res.message || 'Tersimpan.');
+  }).catch(function(err) { hideLoading(); toast((err && err.message) || 'Gagal menyimpan.', 'error'); });
+}
+
 function renderSocialSettings_(c) {
   const row = function(k, label, ph) {
     const it = c[k] || {};

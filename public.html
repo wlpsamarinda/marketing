@@ -27,7 +27,9 @@ button{font-family:inherit;cursor:pointer}
 .hero{background:linear-gradient(135deg,#2e1065 0%,#6d28d9 55%,#a855f7 100%);color:#fff;padding:0 0 46px}
 .hero-inner{max-width:860px;margin:0 auto;padding:20px}
 .hero-brand{display:flex;align-items:center;gap:10px;margin-bottom:26px}
-.logo-badge{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.16);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px}
+.logo-badge{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.16);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px;overflow:hidden;flex:none}
+.logo-badge.has-img{width:48px;height:48px;background:#fff}
+.logo-badge img{width:100%;height:100%;object-fit:contain;display:block}
 .hero-brand b{font-size:15px;display:block;line-height:1.2}
 .hero-brand small{font-size:11px;opacity:.8}
 .hero h1{font-size:27px;line-height:1.25;font-weight:800;margin-bottom:10px}
@@ -140,6 +142,41 @@ const DEFAULT_FIELDS = {
 let PAGE = null;
 
 /* ---------- Load ---------- */
+/* ---------- Tampilan (brand), gambar, ucapan ---------- */
+function brand() {
+  const b = (PAGE && PAGE.brand) || {};
+  return { nama: b.nama || 'Wonderland Samarinda', tagline: b.tagline === undefined ? 'Theme Park & Recreation' : b.tagline, footer: b.footer || '', logo: b.logo || '', banner: b.banner || '' };
+}
+function isImgRef(u) { return /^wmc-img:IMG-\d+$/.test(String(u || '')); }
+// gambar tersimpan di server: diambil terpisah supaya halaman tampil dulu; id gambar tidak berubah sehingga aman disimpan di perangkat
+function loadImgRef(ref, imgEl, onFail) {
+  let c = '';
+  try { c = localStorage.getItem('wmcimg:' + ref) || ''; } catch (e) { c = ''; }
+  if (c) { imgEl.src = c; return; }
+  google.script.run.withSuccessHandler(function(r) {
+    if (r && r.success && r.data && r.data.dataUrl) {
+      imgEl.src = r.data.dataUrl;
+      try { localStorage.setItem('wmcimg:' + ref, r.data.dataUrl); } catch (e) {}
+    } else if (onFail) onFail();
+  }).withFailureHandler(function() { if (onFail) onFail(); }).pubGetLandingImage(ref);
+}
+function hydrateImgs() {
+  document.querySelectorAll('img[data-ref]').forEach(function(img) {
+    loadImgRef(img.getAttribute('data-ref'), img, function() { if (img.parentNode) img.parentNode.style.display = 'none'; });
+  });
+}
+function footHtml(withSource) {
+  const b = brand();
+  return '<div class="foot">' + esc(b.footer || ('© ' + b.nama)) + (withSource && PAGE.source ? ' · ' + esc(PAGE.source) : '') + '</div>';
+}
+// {nama} {kode} {judul} pada judul/pesan ucapan; baris baru dipertahankan
+function fillTpl(t, code) {
+  return String(t || '').replace(/\{nama\}/gi, String((LAST_DATA && LAST_DATA.nama) || 'Anda').trim() || 'Anda')
+    .replace(/\{kode\}/gi, code || '').replace(/\{judul\}/gi, PAGE.judul || '');
+}
+function msgHtml(t) { return esc(t).replace(/\r?\n/g, '<br>'); }
+var LAST_DATA = {};
+
 function loadPage() {
   if (!SLUG) { showState('❓', 'Halaman tidak ditemukan', 'URL tidak valid.'); return; }
   google.script.run
@@ -230,12 +267,16 @@ function render() {
     formHtml += '</div>';
   });
 
+  const B = brand();
+  const BANNER = PAGE.banner_url || B.banner || '';
+  document.title = (PAGE.judul ? PAGE.judul + ' · ' : '') + B.nama;
   app.innerHTML =
     '<div class="hero"><div class="hero-inner">' +
-      '<div class="hero-brand"><div class="logo-badge">W</div><div><b>Wonderland Samarinda</b><small>Theme Park &amp; Recreation</small></div></div>' +
+      '<div class="hero-brand">' + (B.logo ? '<div class="logo-badge has-img"><img data-ref="' + esc(B.logo) + '" alt=""></div>' : '<div class="logo-badge">' + esc(String(B.nama).charAt(0).toUpperCase() || 'W') + '</div>') +
+        '<div><b>' + esc(B.nama) + '</b>' + (B.tagline ? '<small>' + esc(B.tagline) + '</small>' : '') + '</div></div>' +
       '<h1>' + esc(PAGE.judul) + '</h1>' +
       (PAGE.deskripsi ? '<div class="desc">' + esc(PAGE.deskripsi) + '</div>' : '') +
-      (PAGE.banner_url ? '<div class="hero-banner"><img src="' + esc(PAGE.banner_url) + '" alt="banner" referrerpolicy="no-referrer" onerror="this.parentNode.style.display=\'none\'"></div>' : '') +
+      (BANNER ? '<div class="hero-banner">' + (isImgRef(BANNER) ? '<img data-ref="' + esc(BANNER) + '" alt="banner">' : '<img src="' + esc(BANNER) + '" alt="banner" referrerpolicy="no-referrer" onerror="this.parentNode.style.display=\'none\'">') + '</div>' : '') +
     '</div></div>' +
     (PAGE.penawaran ? '<div class="offer"><div class="offer-box">🎁 <b>Penawaran Spesial</b><br>' + esc(PAGE.penawaran) + '</div></div>' : '') +
     '<div class="main"><div class="card">' +
@@ -247,8 +288,9 @@ function render() {
         '<button class="btn btn-primary" id="btnSubmit" type="submit">' + esc(PAGE.cta_label || 'Kirim') + '</button>' +
       '</form>' +
       socialHtml() +
-      '<div class="foot">© Wonderland Samarinda · ' + esc(PAGE.source || '') + '</div>' +
+      footHtml(true) +
     '</div></div>';
+  hydrateImgs();
 
   const first = document.querySelector('#pubForm input, #pubForm select, #pubForm textarea');
   if (first) first.focus();
@@ -272,6 +314,7 @@ function submitForm(e) {
   const btn = document.getElementById('btnSubmit');
   const fields = pickFields();
   const data = { utm: UTM };
+  LAST_DATA = data;
   let missing = '';
   fields.forEach(function(f) {
     data[f.key] = fieldVal(f.key);
@@ -314,31 +357,35 @@ function submitForm(e) {
 /* ---------- Success ---------- */
 function showSuccess(d) {
   const app = document.getElementById('app');
+  const code = d.registration_id || d.nomor_reservasi || d.lead_id || '';
+  const customTitle = PAGE.sukses_judul ? fillTpl(PAGE.sukses_judul, code) : '';
+  const customMsg = PAGE.sukses_pesan ? '<p>' + msgHtml(fillTpl(PAGE.sukses_pesan, code)) + '</p>' : '';
+  const nm = String((LAST_DATA && LAST_DATA.nama) || '').trim();
   if (PAGE.tipe === 'EVENT') {
     const regId = d.registration_id || '';
     const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=' + encodeURIComponent(regId);
     app.innerHTML =
-      '<div class="success"><div class="ic">🎉</div><h1>Pendaftaran Berhasil!</h1>' +
-      '<p>' + (d.duplicate ? 'Anda sudah terdaftar sebelumnya. Gunakan Registration ID ini saat check-in.' : 'Simpan Registration ID & QR Code ini untuk check-in di lokasi acara.') + '</p>' +
+      '<div class="success"><div class="ic">🎉</div><h1>' + esc(customTitle || 'Pendaftaran Berhasil!') + '</h1>' +
+      (customMsg || '<p>' + (d.duplicate ? 'Anda sudah terdaftar sebelumnya. Gunakan Registration ID ini saat check-in.' : 'Simpan Registration ID & QR Code ini untuk check-in di lokasi acara.') + '</p>') +
       '<div class="reg-box"><div style="font-size:12px;color:var(--muted)">REGISTRATION ID</div>' +
       '<div class="reg-id">' + esc(regId) + '</div>' +
       '<img src="' + esc(qrUrl) + '" alt="QR Check-in" referrerpolicy="no-referrer"></div>' +
-      '<p>Info pembayaran & detail acara akan dihubungkan via WhatsApp. Sampai jumpa di Wonderland! 🎡</p>' + socialHtml() +
-      '<div class="foot">© Wonderland Samarinda</div></div>';
+      (customMsg ? '' : '<p>Info pembayaran & detail acara akan dihubungkan via WhatsApp. Sampai jumpa di Wonderland! 🎡</p>') + socialHtml() +
+      footHtml(false) + '</div>';
   } else if (PAGE.tipe === 'RESERVASI') {
     app.innerHTML =
-      '<div class="success"><div class="ic">🎉</div><h1>Reservasi Diterima!</h1>' +
-      '<p>Terima kasih! Tim kami akan menghubungi Anda via WhatsApp untuk konfirmasi &amp; pembayaran.</p>' +
+      '<div class="success"><div class="ic">🎉</div><h1>' + esc(customTitle || 'Reservasi Diterima!') + '</h1>' +
+      (customMsg || '<p>Terima kasih! Tim kami akan menghubungi Anda via WhatsApp untuk konfirmasi &amp; pembayaran.</p>') +
       '<div class="reg-box"><div style="font-size:12px;color:var(--muted)">NOMOR RESERVASI ANDA</div>' +
       '<div class="reg-id">' + esc(d.nomor_reservasi || '-') + '</div></div>' + socialHtml() +
-      '<div class="foot">© Wonderland Samarinda</div></div>';
+      footHtml(false) + '</div>';
   } else {
     app.innerHTML =
-      '<div class="success"><div class="ic">🎉</div><h1>Terima Kasih, ' + esc((PAGE && 'Data Anda') || 'Data Anda') + '!</h1>' +
-      '<p>' + esc('Data Anda sudah kami terima. Tim marketing kami akan menghubungi Anda via WhatsApp.') + '</p>' +
+      '<div class="success"><div class="ic">🎉</div><h1>' + esc(customTitle || (nm ? 'Terima Kasih, ' + nm + '!' : 'Terima Kasih!')) + '</h1>' +
+      (customMsg || '<p>' + esc('Data Anda sudah kami terima. Tim marketing kami akan menghubungi Anda via WhatsApp.') + '</p>') +
       (d.lead_id ? '<div class="reg-box"><div style="font-size:12px;color:var(--muted)">KODE / ID ANDA (tunjukkan ke kasir)</div><div class="reg-id">' + esc(d.lead_id) + '</div></div>' : '') +
-      (PAGE.social && PAGE.social.length ? '<p style="margin-top:12px;font-size:13px">Jangan lupa follow akun kami di bawah ini — petugas kasir akan mengecek saat Anda datang.</p>' : '') + socialHtml() +
-      '<div class="foot">© Wonderland Samarinda</div></div>';
+      (!customMsg && PAGE.social && PAGE.social.length ? '<p style="margin-top:12px;font-size:13px">Jangan lupa follow akun kami di bawah ini — petugas kasir akan mengecek saat Anda datang.</p>' : '') + socialHtml() +
+      footHtml(false) + '</div>';
   }
   window.scrollTo(0, 0);
 }
