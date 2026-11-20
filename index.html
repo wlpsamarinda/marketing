@@ -930,7 +930,7 @@ function gatherFormValues(fields) {
 function openChangePassword(force) {
   const fields = [
     { key: 'old_password', label: 'Password Lama', type: 'password', required: true, full: true },
-    { key: 'new_password', label: 'Password Baru (min. 8 karakter)', type: 'password', required: true, full: true },
+    { key: 'new_password', label: 'Password Baru (min. 12 karakter)', type: 'password', required: true, full: true },
     { key: 'confirm_password', label: 'Konfirmasi Password Baru', type: 'password', required: true, full: true }
   ];
   openModal({
@@ -942,6 +942,7 @@ function openChangePassword(force) {
     onSubmit: function() {
       const v = gatherFormValues(fields);
       if (!v) { toast('Lengkapi semua field.', 'error'); return; }
+      if (v.new_password.length < 12 || v.new_password.length > 256) { toast('Password baru minimal 12 karakter dan maksimal 256 karakter.', 'error'); return; }
       if (v.new_password !== v.confirm_password) { toast('Konfirmasi password tidak sama.', 'error'); return; }
       showLoading('Mengubah password...');
       api('changePassword', App.token, v.old_password, v.new_password).then(function(res) {
@@ -4674,10 +4675,10 @@ function openActivityEditor(row) {
         return '<option value="' + s + '"' + (String((isEdit ? row.sumber : 'MANUAL') || 'MANUAL') === s ? ' selected' : '') + '>' + s + '</option>';
       }).join('') +
     '</select></div>' +
-    ctxSel('axOkr', okrOptions(), isEdit ? row.okr_id : '', 'OKR terkait') +
-    ctxSel('axKpi', kpiSetOptions(), isEdit ? row.kpi_id : '', 'KPI terkait') +
-    ctxSel('axPdca', pdcaOptions(), isEdit ? row.pdca_id : '', 'PDCA terkait') +
-    ctxSel('axRaci', raciOptions(), isEdit ? row.raci_id : '', 'RACI terkait') +
+    ctxSel('axOkr', okrOptions(), isEdit ? row.okr_id : '', 'OKR terkait *') +
+    ctxSel('axKpi', kpiSetOptions(), isEdit ? row.kpi_id : '', 'KPI terkait *') +
+    ctxSel('axPdca', pdcaOptions(), isEdit ? row.pdca_id : '', 'PDCA terkait *') +
+    ctxSel('axRaci', raciOptions(), isEdit ? row.raci_id : '', 'RACI terkait *') +
   '</div>';
 
   let rows = '';
@@ -4758,6 +4759,10 @@ function openActivityEditor(row) {
       pdca_id: document.getElementById('axPdca').value,
       raci_id: document.getElementById('axRaci').value
     };
+    const hasContext = !!(ctx.okr_id || ctx.kpi_id || ctx.pdca_id || ctx.raci_id);
+    if ((!isEdit || hasContext) && (!ctx.okr_id || !ctx.kpi_id || !ctx.pdca_id || !ctx.raci_id)) {
+      toast('Aktivitas wajib ditautkan ke OKR, KPI, PDCA, dan RACI yang saling terhubung.', 'error'); return;
+    }
     document.querySelectorAll('#axBody td.bad').forEach(function(n) { n.classList.remove('bad'); });
     const list = [];
     let bad = null, badMsg = '';
@@ -5115,6 +5120,12 @@ function okrPerfCard(o) {
     return '<tr><td>' + esc(k.nama) + '</td><td class="num">' + fmtNum(k.target) + '</td><td class="num">' + fmtNum(k.aktual) + '</td>' +
       '<td class="num">' + fmtNum(k.pencapaian) + '%</td><td class="num">' + fmtNum(k.bobot) + '%</td></tr>';
   }).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:12px">Belum ada KPI terhubung — hubungkan lewat menu KPI → Pengaturan KPI → kolom "OKR / Objective yang Diukur".</td></tr>';
+  const kpiLinkDetails = (o.kpis || []).map(function(k) {
+    const r = (k.raci || []).map(function(x) { return '<div style="font-size:11.5px;padding:3px 0"><b>RACI:</b> ' + esc(x.aktivitas) + ' · R: ' + esc(x.responsible || '—') + ' · A: ' + esc(x.accountable || '—') + '</div>'; }).join('');
+    const p = (k.pdca || []).map(function(x) { return '<span class="badge ' + c360badge(x.status) + '">' + esc(x.program) + ' · ' + esc(x.status) + '</span>'; }).join(' ');
+    const a = k.activities || { qty: 0, selesai: 0, berjalan: 0, overdue: 0 };
+    return '<div style="padding:9px 0;border-bottom:1px solid var(--border)"><b>' + esc(k.nama) + '</b><div style="font-size:11.5px;color:var(--muted);margin:3px 0">Aktivitas: ' + fmtNum(a.qty) + ' · Selesai: ' + fmtNum(a.selesai) + ' · Berjalan: ' + fmtNum(a.berjalan) + ' · Overdue: ' + fmtNum(a.overdue) + '</div>' + (r || '<div style="font-size:11.5px;color:var(--muted)">Belum ada RACI spesifik KPI ini.</div>') + (p || '<div style="font-size:11.5px;color:var(--muted)">Belum ada PDCA spesifik KPI ini.</div>') + '</div>';
+  }).join('') || '<div style="font-size:12px;color:var(--muted)">Belum ada KPI untuk dirinci.</div>';
   const raciRows = (o.raci || []).map(function(r) {
     return '<div style="font-size:12px;padding:5px 0;border-bottom:1px dashed var(--border)"><b>' + esc(r.aktivitas) + '</b><br>' +
       '<span style="color:var(--muted)">R:</span> ' + esc(r.responsible || '—') + ' · <span style="color:var(--muted)">A:</span> ' + esc(r.accountable || '—') +
@@ -5140,7 +5151,8 @@ function okrPerfCard(o) {
     '</div>' +
     '<div class="two-col" style="margin-bottom:0">' +
       '<div><div class="section-title" style="margin-top:8px">📈 KPI Pengukur (Actual Otomatis)</div>' +
-        '<div class="grid-table-wrap"><table class="table-plain"><thead><tr><th>KPI</th><th class="num">Target</th><th class="num">Actual</th><th class="num">Pencapaian</th><th class="num">Bobot</th></tr></thead><tbody>' + kpiRows + '</tbody></table></div></div>' +
+        '<div class="grid-table-wrap"><table class="table-plain"><thead><tr><th>KPI</th><th class="num">Target</th><th class="num">Actual</th><th class="num">Pencapaian</th><th class="num">Bobot</th></tr></thead><tbody>' + kpiRows + '</tbody></table></div>' +
+        '<div class="section-title" style="margin-top:12px">🔗 RACI, PDCA &amp; Aktivitas per KPI</div>' + kpiLinkDetails + '</div>' +
       '<div><div class="section-title" style="margin-top:8px">🧭 RACI (Peran)</div>' + raciRows +
         '<div class="section-title" style="margin-top:12px">🔄 PDCA (Analisis Gap &amp; Perbaikan)</div><div style="display:flex;gap:6px;flex-wrap:wrap">' + pdcaRows + '</div></div>' +
     '</div>' + gapAlert + '</div>';
