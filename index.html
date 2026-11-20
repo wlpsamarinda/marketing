@@ -556,25 +556,25 @@ tr.or-off{opacity:.55}
 'use strict';
 
 /* ==================== PENYIMPANAN TOKEN SESI ==================== */
-// localStorage dipakai agar sesi tetap ada saat halaman di-refresh / tab ditutup-buka; sessionStorage sebagai cadangan.
-// Sesi tetap berakhir di server bila tidak ada aktivitas lebih dari 1 jam.
+// Token hanya disimpan selama tab aktif; hindari persistensi lintas sesi di localStorage.
+// Token tetap dapat diakses JavaScript, sehingga mitigasi XSS di seluruh UI tetap wajib.
 const TOKEN_KEY = 'wmc_token';
 const TokenStore = {
   get: function() {
-    let t = '';
-    try { t = localStorage.getItem(TOKEN_KEY) || ''; } catch (e) {}
-    if (!t) { try { t = sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) {} }
-    return t;
+    try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; }
   },
   set: function(t) {
-    try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {}
     try { sessionStorage.setItem(TOKEN_KEY, t); } catch (e) {}
+    // Bersihkan token lama yang pernah tersimpan permanen oleh versi sebelumnya.
+    try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
   },
   clear: function() {
-    try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
     try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) {}
+    try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
   }
 };
+// Hapus token persisten versi lama saat aplikasi pertama kali memuat skrip ini.
+try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
 
 /* ==================== STATE MANAGEMENT ==================== */
 const App = {
