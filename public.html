@@ -87,6 +87,28 @@ textarea.form-control{resize:vertical;min-height:80px}
 .toast.error{background:var(--danger)}
 @media(max-width:600px){.hero h1{font-size:22px}.card{padding:18px}}
 
+.gen-sec{margin:20px 0 6px;padding-top:16px;border-top:1px dashed var(--border)}
+.gen-sec h3{font-size:16px;margin-bottom:2px}
+.gen-grp{margin-top:14px}
+.gen-grp-t{font-size:12.5px;font-weight:800;color:var(--primary-dark);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px}
+.gen-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:#fff}
+.gen-row.on{border-color:var(--primary);background:#faf8ff}
+.gen-nm{min-width:0}
+.gen-nm b{display:block;font-size:14px;line-height:1.3}
+.gen-nm small{color:var(--muted);font-size:12.5px}
+.gen-step{display:flex;align-items:center;gap:6px;flex:none}
+.gen-step button{width:34px;height:34px;border-radius:10px;border:1px solid var(--border);background:#f9fafb;font-size:19px;line-height:1;font-weight:700;color:var(--primary-dark)}
+.gen-step button:active{background:var(--primary-light)}
+.gen-step input{width:56px;text-align:center;padding:7px 4px;border:1px solid var(--border);border-radius:10px;font-size:15px;font-weight:700;font-family:inherit;-moz-appearance:textfield}
+.gen-step input::-webkit-outer-spin-button,.gen-step input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.gen-sum{margin:16px 0 14px;padding:14px 16px;border-radius:14px;background:linear-gradient(135deg,#f5f3ff,#ede9fe);border:1px solid #ddd6fe}
+.gen-sum .ln{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:#4b5563;padding:2px 0}
+.gen-sum .tot{display:flex;justify-content:space-between;gap:10px;font-size:16px;font-weight:800;margin-top:8px;padding-top:8px;border-top:1px dashed #c4b5fd}
+.gen-sum .dp{display:flex;justify-content:space-between;gap:10px;font-size:14.5px;font-weight:700;color:var(--primary-dark);margin-top:4px}
+.gen-sum .empty{font-size:13px;color:var(--muted);text-align:center}
+.btn-wa{background:#25d366;color:#fff;text-decoration:none;margin-top:6px}
+.btn-wa:hover{background:#1ebe5b}
+.btn-ghost{background:#fff;color:var(--primary-dark);border-color:var(--border);margin-top:10px}
 .soc{margin-top:18px;padding-top:16px;border-top:1px dashed var(--border);text-align:center}
 .soc-t{font-size:13px;color:var(--muted);margin-bottom:10px;font-weight:600}
 .soc-row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
@@ -131,7 +153,9 @@ const FIELD_DEFS = {
   sekolah:         { label: 'Sekolah / Instansi', ph: 'mis. SDN 001' },
   tanggal_lahir:   { label: 'Tanggal Lahir', type: 'date' },
   kategori:        { label: 'Kategori Peserta', type: 'select', options: ['Anak', 'Dewasa', 'Guru/Pendamping', 'VIP', 'Sponsor'] },
-  catatan:         { label: 'Catatan', textarea: true, ph: 'Tambahan informasi (opsional)' }
+  catatan:         { label: 'Catatan', textarea: true, ph: 'Tambahan informasi (opsional)' },
+  instansi:        { label: 'Komunitas / Instansi', ph: 'mis. SMP Negeri 1 / Komunitas Sepeda' },
+  jam_kedatangan:  { label: 'Jam Kedatangan (perkiraan)', type: 'time' }
 };
 const DEFAULT_FIELDS = {
   LEAD:      ['nama','whatsapp','email','kota','minat','jumlah_peserta','tanggal_rencana','catatan'],
@@ -227,6 +251,72 @@ function socialHtml() {
   return h;
 }
 
+/* ---------- Generator Reservasi (pilih item -> total & DP -> kirim ke WhatsApp admin) ---------- */
+const GEN_ORDER = ['nama', 'instansi', 'whatsapp', 'tanggal_kunjungan', 'tanggal_rencana', 'jam_kedatangan', 'jumlah_peserta'];
+var GEN_TEXT = '';
+function isGen() { return !!(PAGE && PAGE.tipe === 'RESERVASI' && PAGE.mode_wa === 'GENERATOR' && PAGE.gen && PAGE.gen.items); }
+function fmtRp(n) { return 'Rp' + String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+function orderHtml() {
+  const g = PAGE.gen;
+  let h = '<div class="gen-sec"><h3>🛒 Order Detail</h3><div class="sub" style="margin-bottom:0">Atur jumlah tiket, penyewaan, dan paket yang Anda perlukan. Biarkan 0 bila tidak perlu.</div>';
+  (g.groups || []).forEach(function(gr) {
+    const items = g.items.filter(function(i) { return i.kategori === gr.key; });
+    if (!items.length) return;
+    h += '<div class="gen-grp"><div class="gen-grp-t">' + esc(gr.icon) + ' ' + esc(gr.label) + '</div>';
+    items.forEach(function(i) {
+      h += '<div class="gen-row" id="r_' + esc(i.id) + '"><div class="gen-nm"><b>' + esc(i.nama) + '</b><small>' + fmtRp(i.harga) + '</small></div>' +
+        '<div class="gen-step"><button type="button" aria-label="Kurangi" onclick="genStep(\'' + esc(i.id) + '\',-1)">−</button>' +
+        '<input type="number" inputmode="numeric" min="0" max="9999" id="q_' + esc(i.id) + '" value="0" oninput="genRecalc(true)">' +
+        '<button type="button" aria-label="Tambah" onclick="genStep(\'' + esc(i.id) + '\',1)">+</button></div></div>';
+    });
+    h += '</div>';
+  });
+  return h + '</div>';
+}
+function genQty(id) { const el = document.getElementById('q_' + id); const n = el ? Math.floor(Number(el.value)) : 0; return n > 0 ? Math.min(n, 9999) : 0; }
+function genStep(id, d) {
+  const el = document.getElementById('q_' + id);
+  if (!el) return;
+  el.value = Math.max(0, Math.min(9999, genQty(id) + d));
+  genRecalc(true);
+}
+function genItems() {
+  return PAGE.gen.items.map(function(i) { return { id: i.id, qty: genQty(i.id) }; }).filter(function(x) { return x.qty > 0; });
+}
+function genRecalc(fromUser) {
+  if (!isGen()) return;
+  const g = PAGE.gen;
+  let total = 0, tix = 0, rows = '';
+  g.items.forEach(function(i) {
+    const q = genQty(i.id), r = document.getElementById('r_' + i.id);
+    if (r) r.classList.toggle('on', q > 0);
+    if (!q) return;
+    total += q * i.harga;
+    if (i.kategori === 'TIKET') tix += q;
+    rows += '<div class="ln"><span>' + esc(i.nama) + ' × ' + q + '</span><span>' + fmtRp(q * i.harga) + '</span></div>';
+  });
+  const pax = document.getElementById('f_jumlah_peserta');
+  if (fromUser && pax && !pax.dataset.touched && tix > 0) pax.value = tix;
+  const dp = Math.round(total * g.dp_persen / 100);
+  const box = document.getElementById('genSum');
+  if (!box) return;
+  box.innerHTML = total > 0
+    ? rows + '<div class="tot"><span>💰 Total Biaya</span><span>' + fmtRp(total) + '</span></div>' +
+      '<div class="dp"><span>💳 DP ' + esc(String(g.dp_persen).replace('.', ',')) + '%</span><span>' + fmtRp(dp) + '</span></div>'
+    : '<div class="empty">Belum ada item dipilih. Total dan DP akan muncul di sini.</div>';
+}
+function genCopy() {
+  const done = function() { toast('Teks formulir disalin.'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(GEN_TEXT).then(done, function() { genCopyOld(done); }); }
+  else genCopyOld(done);
+}
+function genCopyOld(done) {
+  const t = document.createElement('textarea'); t.value = GEN_TEXT; t.style.position = 'fixed'; t.style.opacity = '0';
+  document.body.appendChild(t); t.select();
+  try { document.execCommand('copy'); done(); } catch (e) { toast('Gagal menyalin. Tekan tombol WhatsApp saja.', 'error'); }
+  t.remove();
+}
+
 function render() {
   const app = document.getElementById('app');
   const fields = pickFields();
@@ -246,26 +336,39 @@ function render() {
         '<div style="font-size:13px;font-weight:700">' + esc(kuotaTxt) + '</div>' +
         '<div class="kuota-bar"><span style="width:' + pct + '%"></span></div></div>';
   }
-  if (PAGE.tipe === 'RESERVASI' && PAGE.biaya) {
+  if (PAGE.tipe === 'RESERVASI' && PAGE.biaya && !isGen()) {
     evHtml += '<div class="ev-info">' + evChip('Harga per Pax', 'Rp ' + Number(PAGE.biaya).toLocaleString('id-ID')) + '</div>';
   }
 
-  let formHtml = '';
-  fields.forEach(function(f) {
+  const todayIso = new Date().toISOString().substring(0, 10);
+  function fieldHtml(f) {
     const k = f.key;
     const req = f.req;
-    formHtml += '<div class="form-group"><label>' + esc(f.label) + (req ? ' <span class="req">*</span>' : '') + '</label>';
+    let h = '<div class="form-group"><label>' + esc(f.label) + (req ? ' <span class="req">*</span>' : '') + '</label>';
     if (f.textarea) {
-      formHtml += '<textarea class="form-control" id="f_' + k + '" placeholder="' + esc(f.ph || '') + '"' + (req ? ' required' : '') + '></textarea>';
+      h += '<textarea class="form-control" id="f_' + k + '" placeholder="' + esc(f.ph || '') + '"' + (req ? ' required' : '') + '></textarea>';
     } else if (f.type === 'select') {
-      formHtml += '<select class="form-control" id="f_' + k + '"><option value="">— Pilih —</option>' +
+      h += '<select class="form-control" id="f_' + k + '"><option value="">— Pilih —</option>' +
         f.options.map(function(o) { return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('') + '</select>';
     } else {
-      formHtml += '<input class="form-control" type="' + (f.type || 'text') + '" id="f_' + k + '" placeholder="' + esc(f.ph || '') + '"' +
-        (f.type === 'number' ? ' min="0" step="1"' : '') + ((k === 'tanggal_lahir' || (f.type === 'date' && /lahir|ultah|ulang tahun|birth/i.test(k + ' ' + (f.label || '')))) ? ' max="' + new Date().toISOString().substring(0, 10) + '"' : '') + (req ? ' required' : '') + '>';
+      const isBirth = (k === 'tanggal_lahir' || (f.type === 'date' && /lahir|ultah|ulang tahun|birth/i.test(k + ' ' + (f.label || ''))));
+      const minAttr = (GEN && f.type === 'date' && (k === 'tanggal_kunjungan' || k === 'tanggal_rencana')) ? ' min="' + todayIso + '"' : '';
+      h += '<input class="form-control" type="' + (f.type || 'text') + '" id="f_' + k + '" placeholder="' + esc(f.ph || '') + '"' +
+        (f.type === 'number' ? ' min="0" step="1"' : '') + (isBirth ? ' max="' + todayIso + '"' : '') + minAttr +
+        (k === 'jumlah_peserta' && GEN ? ' oninput="this.dataset.touched=1"' : '') + (req ? ' required' : '') + '>';
     }
-    formHtml += '</div>';
-  });
+    return h + '</div>';
+  }
+  const GEN = isGen();
+  let formHtml = '';
+  if (GEN) {
+    const head = [], tail = [];
+    fields.forEach(function(f) { (GEN_ORDER.indexOf(f.key) >= 0 ? head : tail).push(f); });
+    head.sort(function(a, b) { return GEN_ORDER.indexOf(a.key) - GEN_ORDER.indexOf(b.key); });
+    formHtml = head.map(fieldHtml).join('') + orderHtml() + tail.map(fieldHtml).join('') + '<div class="gen-sum" id="genSum"></div>';
+  } else {
+    formHtml = fields.map(fieldHtml).join('');
+  }
 
   const B = brand();
   const BANNER = PAGE.banner_url || B.banner || '';
@@ -285,17 +388,22 @@ function render() {
       evHtml +
       '<div id="formErr" class="err hidden"></div>' +
       '<form id="pubForm" onsubmit="return submitForm(event)">' + formHtml +
-        '<button class="btn btn-primary" id="btnSubmit" type="submit">' + esc(PAGE.cta_label || 'Kirim') + '</button>' +
+        '<button class="btn btn-primary" id="btnSubmit" type="submit">' + esc(ctaLabel()) + '</button>' +
       '</form>' +
       socialHtml() +
       footHtml(true) +
     '</div></div>';
   hydrateImgs();
+  if (GEN) genRecalc(false);
 
   const first = document.querySelector('#pubForm input, #pubForm select, #pubForm textarea');
   if (first) first.focus();
 }
 
+function ctaLabel() {
+  const c = PAGE.cta_label || 'Kirim';
+  return isGen() && c === 'Kirim' ? '📲 Kirim Reservasi ke WhatsApp' : c;
+}
 function evChip(l, v) {
   return '<div class="ev-chip"><div class="l">' + esc(l) + '</div><div class="v">' + esc(v || '—') + '</div></div>';
 }
@@ -321,6 +429,10 @@ function submitForm(e) {
     if (f.req && !data[f.key] && !missing) missing = f.label;
   });
   if (missing) { errEl.textContent = '"' + missing + '" wajib diisi.'; errEl.classList.remove('hidden'); return false; }
+  if (isGen()) {
+    data.items = genItems();
+    if (!data.items.length) { errEl.textContent = 'Pilih minimal satu tiket, penyewaan, atau paket pada Order Detail.'; errEl.classList.remove('hidden'); errEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); return false; }
+  }
   if (data.whatsapp && String(data.whatsapp).replace(/\D/g, '').length < 8) {
     errEl.textContent = 'Nomor WhatsApp tidak valid.'; errEl.classList.remove('hidden'); return false;
   }
@@ -329,7 +441,7 @@ function submitForm(e) {
 
   const done = function(res) {
     btn.disabled = false;
-    btn.textContent = PAGE.cta_label || 'Kirim';
+    btn.textContent = ctaLabel();
     if (!res || !res.success) {
       errEl.textContent = (res && res.message) || 'Terjadi kesalahan. Silakan coba lagi.';
       errEl.classList.remove('hidden');
@@ -339,7 +451,7 @@ function submitForm(e) {
   };
   const fail = function() {
     btn.disabled = false;
-    btn.textContent = PAGE.cta_label || 'Kirim';
+    btn.textContent = ctaLabel();
     errEl.textContent = 'Terjadi kesalahan koneksi. Silakan coba lagi.';
     errEl.classList.remove('hidden');
   };
@@ -372,6 +484,20 @@ function showSuccess(d) {
       '<img src="' + esc(qrUrl) + '" alt="QR Check-in" referrerpolicy="no-referrer"></div>' +
       (customMsg ? '' : '<p>Info pembayaran & detail acara akan dihubungkan via WhatsApp. Sampai jumpa di Wonderland! 🎡</p>') + socialHtml() +
       footHtml(false) + '</div>';
+  } else if (PAGE.tipe === 'RESERVASI' && isGen() && d.wa_text) {
+    GEN_TEXT = d.wa_text;
+    const url = 'https://wa.me/' + encodeURIComponent(d.wa_admin || PAGE.gen.wa_admin) + '?text=' + encodeURIComponent(d.wa_text);
+    app.innerHTML =
+      '<div class="success"><div class="ic">🎉</div><h1>' + esc(customTitle || 'Reservasi Tersimpan!') + '</h1>' +
+      (customMsg || '<p>Satu langkah lagi: tekan tombol hijau di bawah untuk mengirim formulir ini ke WhatsApp admin kami. Reservasi baru dianggap diterima setelah pesan terkirim.</p>') +
+      '<div class="reg-box"><div style="font-size:12px;color:var(--muted)">NOMOR RESERVASI ANDA</div>' +
+      '<div class="reg-id">' + esc(d.nomor_reservasi || '-') + '</div>' +
+      '<div style="margin-top:12px;font-size:14px">💰 Total <b>' + fmtRp(d.total) + '</b><br>💳 DP ' + esc(String(PAGE.gen.dp_persen).replace('.', ',')) + '% <b>' + fmtRp(d.dp) + '</b></div></div>' +
+      '<a class="btn btn-wa" href="' + esc(url) + '" target="_blank" rel="noopener">📲 Kirim ke WhatsApp Admin</a>' +
+      '<button type="button" class="btn btn-ghost" onclick="genCopy()">📋 Salin Teks Formulir</button>' +
+      '<p style="margin-top:14px;font-size:12.5px">WhatsApp akan terbuka otomatis. Jika tidak, tekan tombol hijau di atas.</p>' + socialHtml() +
+      footHtml(false) + '</div>';
+    setTimeout(function() { try { window.location.href = url; } catch (e) {} }, 1600);
   } else if (PAGE.tipe === 'RESERVASI') {
     app.innerHTML =
       '<div class="success"><div class="ic">🎉</div><h1>' + esc(customTitle || 'Reservasi Diterima!') + '</h1>' +

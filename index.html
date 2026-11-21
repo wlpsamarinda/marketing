@@ -428,6 +428,20 @@ table.gx{border-collapse:separate;border-spacing:0;font-size:12.5px;min-width:10
 
 /* ==================== CUSTOMER OUTREACH ==================== */
 .lb-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}.lb-f.lb-full{grid-column:1/-1}
+.rg-row{display:grid;grid-template-columns:170px 1fr 120px auto auto auto auto;gap:6px;align-items:center;margin-bottom:6px}
+.rg-row .or-check{padding-bottom:0}
+@media(max-width:900px){.rg-row{grid-template-columns:1fr 1fr;padding:8px;border:1px solid var(--border);border-radius:10px}.rg-row .rg-n{grid-column:1/-1}}
+.rgd-grp{font-size:12px;font-weight:800;color:var(--primary-dark,#4c1d95);text-transform:uppercase;letter-spacing:.4px;margin:12px 0 6px}
+.rgd-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;background:#fff}
+.rgd-row.on{border-color:var(--primary);background:#faf8ff}
+.rgd-row small{color:var(--muted);display:block}
+.rgd-step{display:flex;align-items:center;gap:5px;flex:none}
+.rgd-step button{width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:#f9fafb;font-size:17px;font-weight:700;cursor:pointer}
+.rgd-step input{width:58px;text-align:center;padding:5px 2px;border:1px solid var(--border);border-radius:8px;font-weight:700}
+.rgd-sum{margin-top:12px;padding:12px 14px;border-radius:12px;background:#f5f3ff;border:1px solid #ddd6fe;font-size:13px}
+.rgd-sum .tot{display:flex;justify-content:space-between;font-weight:800;font-size:15px;margin-top:6px;padding-top:6px;border-top:1px dashed #c4b5fd}
+.rgd-sum .dp{display:flex;justify-content:space-between;font-weight:700;color:#4c1d95;margin-top:3px}
+.rgd-sum .ln{display:flex;justify-content:space-between;color:#4b5563}
 .lb-sec{margin-top:16px;border:1px solid var(--border);border-radius:10px;padding:12px;background:#fafafa}
 .lb-sec-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap}
 .lb-row{display:flex;gap:8px;align-items:flex-start;background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:6px}
@@ -2061,6 +2075,7 @@ const MODULE_CONFIG = {
       { key: 'public_url', label: 'URL Publik' },
       { key: 'judul', label: 'Judul' },
       { key: 'tipe', label: 'Tipe', type: 'badge' },
+      { key: 'mode_wa', label: 'Mode', type: 'badge' },
       { key: 'campaign_id', label: 'Campaign', type: 'badge', visible: false },
       { key: 'source', label: 'Source' },
       { key: 'event_id', label: 'Event', type: 'badge', visible: false },
@@ -2075,6 +2090,7 @@ const MODULE_CONFIG = {
       { key: 'slug', label: 'Slug (URL)', required: true, placeholder: 'mis. promo-sekolah-oktober', hint: 'Huruf kecil, angka, dan tanda hubung saja.' },
       { key: 'tipe', label: 'Tipe Halaman', type: 'select', required: true, defaultValue: 'LEAD',
         options: [{ value: 'LEAD', label: 'Lead Capture' }, { value: 'RESERVASI', label: 'Reservasi Online' }, { value: 'EVENT', label: 'Registrasi Event' }] },
+      { key: 'mode_wa', label: 'Mode Form Reservasi', type: 'select', options: [{ value: 'GENERATOR', label: 'Generator WhatsApp (pilih tiket / sewa / makan, kirim ke WA admin)' }], hint: 'Khusus tipe Reservasi Online. Kosongkan = reservasi biasa. Daftar harga & item diatur di kartu "Form Reservasi Generator" di bawah menu ini.' },
       { key: 'judul', label: 'Judul', required: true, full: true },
       { key: 'deskripsi', label: 'Deskripsi', type: 'textarea', full: true },
       { key: 'banner_url', label: 'Banner Halaman (unggah foto)', type: 'image', full: true, hint: 'Unggah foto JPG atau PNG, otomatis diperkecil. Kosongkan untuk memakai banner bawaan (Pengaturan Tampilan di atas). Link gambar lama tetap berfungsi.' },
@@ -3894,6 +3910,10 @@ async function renderModulePage(moduleKey) {
         cls: 'btn-primary', title: 'Export ke Excel (.xlsx): baris yang dipilih, atau semua data sesuai filter/pencarian',
         label: function(n) { return n > 0 ? '📊 Export Excel (' + n + ')' : '📊 Export Excel'; },
         onClick: function(ids) { exportCrmExcel(ids); }
+      }] : moduleKey === 'reservations' ? [{
+        cls: 'btn-primary', title: 'Isi formulir reservasi (tiket, sewa, makan), hitung total & DP, lalu kirim teksnya ke WhatsApp pelanggan',
+        label: '🧾 Generator Reservasi',
+        onClick: function() { openResvGenerator(); }
       }] : moduleKey === 'content' ? [{
         cls: 'btn-outline', title: 'Import data konten dari file Excel (.xlsx)',
         label: '⬆ Import Data',
@@ -3927,7 +3947,7 @@ function loadSummary(moduleKey) {
   if (!cfg || !cfg.summary) return;
   api(cfg.summary.api, App.token).then(function(res) {
     const host = document.getElementById('summaryHost');
-    if (host && App.currentRoute === moduleKey) { host.innerHTML = cfg.summary.render(res.data); orHydrateImgs(host); }
+    if (host && App.currentRoute === moduleKey) { host.innerHTML = cfg.summary.render(res.data); orHydrateImgs(host); if (moduleKey === 'landingpages') { rgDraw(); rgBind(); } }
   }).catch(function() { /* ringkasan bersifat tambahan; tabel tetap berfungsi */ });
 }
 function miniTable(columns, rows) {
@@ -7591,8 +7611,10 @@ const LB_STD = {
   nama: 'Nama', whatsapp: 'Nomor WhatsApp', email: 'Email', kota: 'Kota',
   jenis_pelanggan: 'Jenis Pelanggan', minat: 'Kebutuhan / Minat', jumlah_peserta: 'Jumlah Peserta',
   tanggal_rencana: 'Rencana Tanggal Kunjungan', tanggal_kunjungan: 'Tanggal Kunjungan', paket: 'Paket',
-  umur: 'Umur', tanggal_lahir: 'Tanggal Lahir', sekolah: 'Sekolah', kategori: 'Kategori', catatan: 'Catatan'
+  umur: 'Umur', tanggal_lahir: 'Tanggal Lahir', sekolah: 'Sekolah', kategori: 'Kategori', catatan: 'Catatan',
+  instansi: 'Komunitas / Instansi', jam_kedatangan: 'Jam Kedatangan (perkiraan)'
 };
+const LB_DEFAULTS_GEN = ['nama', 'instansi', 'whatsapp', 'tanggal_kunjungan', 'jam_kedatangan', 'jumlah_peserta', 'catatan'];
 const LB_DEFAULTS = {
   LEAD: ['nama', 'whatsapp', 'jenis_pelanggan', 'minat'],
   RESERVASI: ['nama', 'whatsapp', 'tanggal_kunjungan', 'jumlah_peserta', 'paket', 'minat'],
@@ -7600,11 +7622,12 @@ const LB_DEFAULTS = {
 };
 const LB_LOCKED = ['nama', 'whatsapp'];
 const LB_TYPES = [['text', 'Teks pendek'], ['textarea', 'Teks panjang'], ['number', 'Angka'], ['date', 'Tanggal'], ['select', 'Pilihan (dropdown)'], ['email', 'Email'], ['tel', 'No. Telepon']];
-const LB = { fields: [], tipe: 'LEAD', dirty: false, editId: null };
+const LB = { fields: [], tipe: 'LEAD', dirty: false, editId: null, gen: false };
 
-function lbDefaults(tipe) {
-  return (LB_DEFAULTS[tipe] || LB_DEFAULTS.LEAD).map(function(k) {
-    return { key: k, label: LB_STD[k], required: LB_LOCKED.indexOf(k) >= 0 || (tipe === 'RESERVASI' && (k === 'tanggal_kunjungan' || k === 'jumlah_peserta')), custom: false };
+function lbDefaults(tipe, gen) {
+  const gm = gen === undefined ? LB.gen : gen;
+  return ((tipe === 'RESERVASI' && gm) ? LB_DEFAULTS_GEN : (LB_DEFAULTS[tipe] || LB_DEFAULTS.LEAD)).map(function(k) {
+    return { key: k, label: LB_STD[k], required: LB_LOCKED.indexOf(k) >= 0 || (tipe === 'RESERVASI' && (k === 'tanggal_kunjungan' || k === 'jumlah_peserta' || (gm && k === 'jam_kedatangan'))), custom: false };
   });
 }
 function lbParse(json, tipe) {
@@ -7703,6 +7726,7 @@ function openLandingEditor(row) {
   fields.forEach(function(f) { if (f.defaultValue !== undefined) def[f.key] = f.defaultValue; });
   LB.editId = isEdit ? row.page_id : null;
   LB.tipe = isEdit ? String(row.tipe || 'LEAD') : 'LEAD';
+  LB.gen = isEdit && String(row.mode_wa || '').toUpperCase() === 'GENERATOR';
   LB.fields = isEdit ? lbParse(row.form_fields, LB.tipe) : lbDefaults(LB.tipe);
   LB.dirty = isEdit && String(row.form_fields || '').trim() !== '' && String(row.form_fields).trim() !== '[]';
 
@@ -7757,6 +7781,10 @@ function openLandingEditor(row) {
     LB.tipe = e.target.value;
     if (!LB.dirty) { LB.fields = lbDefaults(LB.tipe); lbRender(); }
   });
+  root.querySelector('[data-lk="mode_wa"]').addEventListener('change', function(e) {
+    LB.gen = e.target.value === 'GENERATOR';
+    if (!LB.dirty) { LB.fields = lbDefaults(LB.tipe); lbRender(); }
+  });
   document.getElementById('lbList').addEventListener('click', function(e) {
     const b = e.target.closest('[data-act]'); const rowEl = e.target.closest('.lb-row');
     if (!b || !rowEl) return;
@@ -7798,6 +7826,7 @@ function lbSave() {
   if (!values.slug) { toast('Slug wajib diisi.', 'error'); return; }
   if (!values.judul) { toast('Judul wajib diisi.', 'error'); return; }
   if (values.tipe === 'EVENT' && !values.event_id) { toast('Tipe EVENT wajib memilih Event.', 'error'); return; }
+  if (values.tipe !== 'RESERVASI') values.mode_wa = '';
   for (let i = 0; i < LB.fields.length; i++) {
     if (!String(LB.fields[i].label || '').trim()) { toast('Ada kolom form yang labelnya kosong.', 'error'); return; }
     if (LB.fields[i].custom && LB.fields[i].type === 'select' && !String(LB.fields[i].options || '').trim()) { toast('Kolom "' + LB.fields[i].label + '" (dropdown) belum punya pilihan.', 'error'); return; }
@@ -7820,6 +7849,7 @@ function renderLandingSettings(d) {
     '<button class="btn btn-primary" onclick="lpSaveBase()">Simpan</button>' +
     '<button class="btn btn-outline" onclick="lpShowGuide()">📘 Panduan &amp; Kode Proxy</button></div>' +
     '<div class="form-hint" style="margin-top:6px">Link bawaan saat ini: <code>' + esc(App.landingExec || '(belum tersedia — deploy sebagai Web App)') + '?page=&lt;slug&gt;</code></div></div>' +
+    renderResvGenSettings_(d.resv, d.resv_groups) +
     renderBrandSettings_(d.brand || {}) +
     renderSocialSettings_(d.social || {});
 }
@@ -7890,6 +7920,169 @@ function lpImgClear(btn) {
   const box = btn.closest('.lp-img'); if (!box) return;
   box.querySelector('.lp-img-val').value = '';
   box.querySelector('.lp-img-prev').innerHTML = '<div class="form-hint">Belum ada gambar.</div>';
+}
+/* ==================== GENERATOR RESERVASI: PENGATURAN KATALOG ==================== */
+const RG = { cfg: { items: [] }, groups: [] };
+function rgCanEdit_() { return !!App.user && (App.user.role === 'ADMIN' || App.user.role === 'MANAGER'); }
+function rgNewId_() { return 'i' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36); }
+function rgRp_(n) { return 'Rp' + String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+function renderResvGenSettings_(cfg, groups) {
+  RG.cfg = JSON.parse(JSON.stringify(cfg || { items: [] }));
+  RG.groups = groups || [];
+  const ro = rgCanEdit_() ? '' : ' disabled';
+  return '<div class="card card-pad" style="margin-bottom:16px"><div class="card-title"><span class="dot"></span>Form Reservasi Generator (harga, item &amp; teks WhatsApp)</div>' +
+    '<div class="form-hint" style="margin-bottom:10px">Dipakai oleh landing page bermode <b>Generator WhatsApp</b> dan tombol <b>Generator Reservasi</b> di menu Reservasi. Harga selalu dihitung ulang di server dari daftar ini. ' + (rgCanEdit_() ? '' : '<b>Hanya Admin / Manager yang dapat mengubah.</b>') + '</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 12px">' +
+      '<div class="form-group"><label>Nomor WhatsApp admin (tujuan form pelanggan)</label><input class="form-control" id="rg_wa" value="' + esc(RG.cfg.wa_admin || '') + '" placeholder="0822-5433-5976"' + ro + '></div>' +
+      '<div class="form-group"><label>DP (% dari total)</label><input class="form-control" id="rg_dp" type="number" min="0" max="100" step="any" value="' + esc(RG.cfg.dp_persen === undefined ? 50 : RG.cfg.dp_persen) + '"' + ro + '></div>' +
+      '<div class="form-group"><label>Nama usaha di bawah judul formulir</label><input class="form-control" id="rg_usaha" maxlength="80" value="' + esc(RG.cfg.nama_usaha || '') + '"' + ro + '></div>' +
+    '</div>' +
+    '<div class="form-group"><label>Daftar item (tiket, penyewaan, paket makan, paket lain)</label><div id="rgItems"></div>' +
+      (rgCanEdit_() ? '<button type="button" class="btn btn-outline btn-sm" onclick="rgAdd()">＋ Tambah Item</button>' : '') +
+      '<div class="form-hint">Item yang dinonaktifkan tidak tampil di form pelanggan, tapi data lama tetap aman. Nomor urut tampil sesuai kelompok, lalu urutan daftar ini.</div></div>' +
+    '<div class="form-group"><label>Blok pembayaran (tampil di teks WhatsApp setelah total &amp; DP)</label><textarea class="form-control" id="rg_bayar" rows="6"' + ro + '>' + esc(RG.cfg.blok_pembayaran || '') + '</textarea></div>' +
+    '<div class="form-group"><label>Blok penutup (lokasi, jam operasional, kontak, medsos)</label><textarea class="form-control" id="rg_tutup" rows="7"' + ro + '>' + esc(RG.cfg.blok_penutup || '') + '</textarea></div>' +
+    (rgCanEdit_() ? '<button class="btn btn-primary" onclick="rgSave()">Simpan Form Reservasi</button>' : '') +
+    '</div>';
+}
+function rgDraw() {
+  const host = document.getElementById('rgItems');
+  if (!host) return;
+  const ro = rgCanEdit_() ? '' : ' disabled';
+  if (!RG.cfg.items.length) { host.innerHTML = '<div class="form-hint">Belum ada item.</div>'; return; }
+  host.innerHTML = RG.cfg.items.map(function(it, i) {
+    return '<div class="rg-row" data-i="' + i + '">' +
+      '<select class="form-control rg-k" data-f="kategori"' + ro + '>' + RG.groups.map(function(g) { return '<option value="' + esc(g.key) + '"' + (g.key === it.kategori ? ' selected' : '') + '>' + esc(g.icon + ' ' + g.label) + '</option>'; }).join('') + '</select>' +
+      '<input class="form-control rg-n" data-f="nama" maxlength="80" placeholder="Nama item, mis. Paket IGTKI" value="' + esc(it.nama) + '"' + ro + '>' +
+      '<input class="form-control rg-h" data-f="harga" type="number" min="0" step="1000" placeholder="Harga" value="' + esc(it.harga) + '"' + ro + '>' +
+      '<label class="or-check rg-a"><input type="checkbox" data-f="aktif"' + (it.aktif !== false ? ' checked' : '') + ro + '> Aktif</label>' +
+      (rgCanEdit_() ? '<button type="button" class="btn btn-outline btn-sm" data-a="up" title="Naik">↑</button><button type="button" class="btn btn-outline btn-sm" data-a="down" title="Turun">↓</button><button type="button" class="btn btn-outline btn-sm" data-a="del" title="Hapus">🗑</button>' : '') +
+    '</div>';
+  }).join('');
+}
+function rgBind() {
+  const host = document.getElementById('rgItems');
+  if (!host || host.getAttribute('data-bound')) return;
+  host.setAttribute('data-bound', '1');
+  const upd = function(e) {
+    const row = e.target.closest('.rg-row'); const f = e.target.getAttribute('data-f');
+    if (!row || !f) return;
+    const it = RG.cfg.items[Number(row.getAttribute('data-i'))];
+    it[f] = f === 'aktif' ? e.target.checked : e.target.value;
+  };
+  host.addEventListener('input', upd); host.addEventListener('change', upd);
+  host.addEventListener('click', function(e) {
+    const b = e.target.closest('[data-a]'); const row = e.target.closest('.rg-row');
+    if (!b || !row) return;
+    const i = Number(row.getAttribute('data-i')), a = b.getAttribute('data-a'), arr = RG.cfg.items;
+    if (a === 'up' && i > 0) { const t = arr[i]; arr[i] = arr[i - 1]; arr[i - 1] = t; }
+    else if (a === 'down' && i < arr.length - 1) { const t = arr[i]; arr[i] = arr[i + 1]; arr[i + 1] = t; }
+    else if (a === 'del') { arr.splice(i, 1); }
+    else return;
+    rgDraw();
+  });
+}
+function rgAdd() {
+  RG.cfg.items.push({ id: rgNewId_(), kategori: 'LAIN', nama: '', harga: 0, aktif: true });
+  rgDraw();
+  const rows = document.querySelectorAll('#rgItems .rg-n');
+  if (rows.length) rows[rows.length - 1].focus();
+}
+function rgSave() {
+  const g = function(id) { const e = document.getElementById(id); return e ? e.value : ''; };
+  const cfg = { wa_admin: g('rg_wa'), dp_persen: g('rg_dp'), nama_usaha: g('rg_usaha'), blok_pembayaran: g('rg_bayar'), blok_penutup: g('rg_tutup'), items: RG.cfg.items };
+  showLoading('Menyimpan...');
+  api('apiResvGenSaveSettings', App.token, cfg).then(function(res) {
+    hideLoading(); toast(res.message || 'Tersimpan.');
+    RG.cfg = JSON.parse(JSON.stringify(res.data.cfg)); App.resvGen = null; rgDraw();
+  }).catch(function(err) { hideLoading(); toast((err && err.message) || 'Gagal menyimpan.', 'error'); });
+}
+/* ==================== GENERATOR RESERVASI (ADMIN): isi form -> total & DP -> kirim ke WhatsApp pelanggan ==================== */
+function openResvGenerator() {
+  if (App.resvGen) { rgdOpen_(App.resvGen); return; }
+  showLoading('Memuat daftar harga...');
+  api('apiResvGenGetSettings', App.token).then(function(r) {
+    hideLoading(); App.resvGen = r.data; rgdOpen_(r.data);
+  }).catch(function(err) { hideLoading(); toast((err && err.message) || 'Gagal memuat daftar harga.', 'error'); });
+}
+function rgdOpen_(d) {
+  const items = (d.cfg.items || []).filter(function(i) { return i.aktif !== false; });
+  App.rgd = { items: items, dp: d.cfg.dp_persen };
+  let order = '';
+  (d.groups || []).forEach(function(g) {
+    const list = items.filter(function(i) { return i.kategori === g.key; });
+    if (!list.length) return;
+    order += '<div class="rgd-grp">' + esc(g.icon + ' ' + g.label) + '</div>' + list.map(function(i) {
+      return '<div class="rgd-row" id="rgr_' + esc(i.id) + '"><div><b>' + esc(i.nama) + '</b><small>' + rgRp_(i.harga) + '</small></div>' +
+        '<div class="rgd-step"><button type="button" onclick="rgdStep(\'' + esc(i.id) + '\',-1)">−</button>' +
+        '<input type="number" min="0" max="9999" value="0" id="rgq_' + esc(i.id) + '" oninput="rgdCalc(true)">' +
+        '<button type="button" onclick="rgdStep(\'' + esc(i.id) + '\',1)">+</button></div></div>';
+    }).join('');
+  });
+  if (!items.length) order = '<div class="form-hint">Belum ada item aktif. Tambahkan di Landing Pages → Form Reservasi Generator.</div>';
+  const inp = function(id, label, type, ph, req) {
+    return '<div class="form-group"><label>' + label + (req ? ' <span style="color:var(--danger)">*</span>' : '') + '</label><input class="form-control" id="' + id + '" type="' + type + '"' + (ph ? ' placeholder="' + ph + '"' : '') + '></div>';
+  };
+  openModal({
+    title: '🧾 Generator Reservasi', wide: true, submitText: 'Buat Teks Formulir',
+    body: '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 12px">' +
+        inp('rgd_nama', 'Nama Pemesan', 'text', '', true) + inp('rgd_instansi', 'Komunitas / Instansi', 'text', 'mis. SMP Negeri 1', false) +
+        inp('rgd_wa', 'Nomor HP/WA', 'tel', '08xxxxxxxxxx', true) + inp('rgd_tgl', 'Tanggal Kunjungan', 'date', '', true) +
+        inp('rgd_jam', 'Jam Kedatangan (perkiraan)', 'time', '', true) + inp('rgd_pax', 'Jumlah Pengunjung', 'number', '', true) +
+      '</div><div class="form-group"><label>Catatan (opsional)</label><input class="form-control" id="rgd_cat" maxlength="300"></div>' +
+      '<div style="border-top:1px dashed var(--border);margin:6px 0"></div><b>🛒 Order Detail</b>' + order +
+      '<div class="rgd-sum" id="rgdSum"></div>' +
+      '<label class="or-check" style="margin-top:10px"><input type="checkbox" id="rgd_save" checked> Simpan ke data Reservasi &amp; CRM (status Pertanyaan)</label>',
+    onSubmit: rgdSubmit
+  });
+  const px = document.getElementById('rgd_pax'); if (px) px.addEventListener('input', function() { px.dataset.touched = 1; });
+  rgdCalc(false);
+}
+function rgdQty(id) { const e = document.getElementById('rgq_' + id); const n = e ? Math.floor(Number(e.value)) : 0; return n > 0 ? Math.min(n, 9999) : 0; }
+function rgdStep(id, d) { const e = document.getElementById('rgq_' + id); if (e) { e.value = Math.max(0, Math.min(9999, rgdQty(id) + d)); rgdCalc(true); } }
+function rgdCalc(fromUser) {
+  if (!App.rgd) return;
+  let total = 0, tix = 0, rows = '';
+  App.rgd.items.forEach(function(i) {
+    const q = rgdQty(i.id), r = document.getElementById('rgr_' + i.id);
+    if (r) r.classList.toggle('on', q > 0);
+    if (!q) return;
+    total += q * i.harga; if (i.kategori === 'TIKET') tix += q;
+    rows += '<div class="ln"><span>' + esc(i.nama) + ' × ' + q + '</span><span>' + rgRp_(q * i.harga) + '</span></div>';
+  });
+  const pax = document.getElementById('rgd_pax');
+  if (fromUser && pax && !pax.dataset.touched && tix > 0) pax.value = tix;
+  const box = document.getElementById('rgdSum');
+  if (box) box.innerHTML = total > 0 ? rows + '<div class="tot"><span>Total Biaya</span><span>' + rgRp_(total) + '</span></div><div class="dp"><span>DP ' + esc(String(App.rgd.dp).replace('.', ',')) + '%</span><span>' + rgRp_(Math.round(total * App.rgd.dp / 100)) + '</span></div>' : '<span style="color:var(--muted)">Pilih item untuk melihat total dan DP.</span>';
+}
+function rgdSubmit() {
+  const g = function(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; };
+  const data = { nama: g('rgd_nama'), instansi: g('rgd_instansi'), whatsapp: g('rgd_wa'), tanggal_kunjungan: g('rgd_tgl'), jam_kedatangan: g('rgd_jam'), jumlah_peserta: g('rgd_pax'), catatan: g('rgd_cat') };
+  data.items = App.rgd.items.map(function(i) { return { id: i.id, qty: rgdQty(i.id) }; }).filter(function(x) { return x.qty > 0; });
+  const save = document.getElementById('rgd_save').checked;
+  const miss = data.nama ? (!data.whatsapp ? 'Nomor HP/WA' : !data.tanggal_kunjungan ? 'Tanggal kunjungan' : !data.jam_kedatangan ? 'Jam kedatangan' : !data.jumlah_peserta ? 'Jumlah pengunjung' : '') : 'Nama pemesan';
+  if (miss) { toast(miss + ' wajib diisi.', 'error'); return; }
+  if (!data.items.length) { toast('Pilih minimal satu item pada Order Detail.', 'error'); return; }
+  showLoading('Membuat formulir...');
+  api('apiResvGenCreate', App.token, data, save).then(function(res) {
+    hideLoading();
+    const d = res.data;
+    App.rgdText = d.wa_text; App.rgdPhone = d.wa_customer;
+    openModal({
+      title: save ? '✅ Reservasi Tersimpan — ' + (d.nomor_reservasi || '') : '📄 Teks Formulir', wide: true, footer: null,
+      body: '<div class="form-hint" style="margin-bottom:6px">Total <b>' + rgRp_(d.total) + '</b> · DP <b>' + rgRp_(d.dp) + '</b>. Teks di bawah siap dikirim ke pelanggan (boleh diedit dulu).</div>' +
+        '<textarea class="form-control" id="rgdText" rows="18" style="font-family:inherit;font-size:13px">' + esc(d.wa_text) + '</textarea>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:flex-end">' +
+        '<button class="btn btn-outline" onclick="closeModal()">Tutup</button>' +
+        '<button class="btn btn-outline" onclick="copyText_(document.getElementById(\'rgdText\').value, \'Teks formulir disalin.\')">📋 Salin Teks</button>' +
+        '<button class="btn btn-primary" onclick="rgdSendWa()">📲 Kirim ke WhatsApp Pelanggan</button></div>'
+    });
+    if (save && App.currentRoute === 'reservations') reloadGrid('reservations');
+  }).catch(function(err) { hideLoading(); toast((err && err.message) || 'Gagal membuat formulir.', 'error'); });
+}
+function rgdSendWa() {
+  const t = document.getElementById('rgdText');
+  window.open(orWaUrl(App.rgdPhone, t ? t.value : App.rgdText), '_blank', 'noopener');
 }
 function renderBrandSettings_(b) {
   return '<div class="card card-pad" style="margin-bottom:16px"><div class="card-title"><span class="dot"></span>Tampilan Halaman Publik (nama, logo &amp; banner bawaan)</div>' +
