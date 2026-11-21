@@ -438,6 +438,9 @@ table.gx{border-collapse:separate;border-spacing:0;font-size:12.5px;min-width:10
 .rgd-step{display:flex;align-items:center;gap:5px;flex:none}
 .rgd-step button{width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:#f9fafb;font-size:17px;font-weight:700;cursor:pointer}
 .rgd-step input{width:58px;text-align:center;padding:5px 2px;border:1px solid var(--border);border-radius:8px;font-weight:700}
+.rgd-note{display:flex;gap:6px;align-items:flex-start;margin-bottom:6px}
+.rgd-note .n{font-weight:800;padding-top:9px;min-width:22px;text-align:right}
+.rgd-note input{flex:1}
 .rgd-sum{margin-top:12px;padding:12px 14px;border-radius:12px;background:#f5f3ff;border:1px solid #ddd6fe;font-size:13px}
 .rgd-sum .tot{display:flex;justify-content:space-between;font-weight:800;font-size:15px;margin-top:6px;padding-top:6px;border-top:1px dashed #c4b5fd}
 .rgd-sum .dp{display:flex;justify-content:space-between;font-weight:700;color:#4c1d95;margin-top:3px}
@@ -7614,7 +7617,7 @@ const LB_STD = {
   umur: 'Umur', tanggal_lahir: 'Tanggal Lahir', sekolah: 'Sekolah', kategori: 'Kategori', catatan: 'Catatan',
   instansi: 'Komunitas / Instansi', jam_kedatangan: 'Jam Kedatangan (perkiraan)'
 };
-const LB_DEFAULTS_GEN = ['nama', 'instansi', 'whatsapp', 'tanggal_kunjungan', 'jam_kedatangan', 'jumlah_peserta', 'catatan'];
+const LB_DEFAULTS_GEN = ['nama', 'instansi', 'whatsapp', 'tanggal_kunjungan', 'jam_kedatangan', 'jumlah_peserta'];
 const LB_DEFAULTS = {
   LEAD: ['nama', 'whatsapp', 'jenis_pelanggan', 'minat'],
   RESERVASI: ['nama', 'whatsapp', 'tanggal_kunjungan', 'jumlah_peserta', 'paket', 'minat'],
@@ -8029,14 +8032,29 @@ function rgdOpen_(d) {
         inp('rgd_nama', 'Nama Pemesan', 'text', '', true) + inp('rgd_instansi', 'Komunitas / Instansi', 'text', 'mis. SMP Negeri 1', false) +
         inp('rgd_wa', 'Nomor HP/WA', 'tel', '08xxxxxxxxxx', true) + inp('rgd_tgl', 'Tanggal Kunjungan', 'date', '', true) +
         inp('rgd_jam', 'Jam Kedatangan (perkiraan)', 'time', '', true) + inp('rgd_pax', 'Jumlah Pengunjung', 'number', '', true) +
-      '</div><div class="form-group"><label>Catatan (opsional)</label><input class="form-control" id="rgd_cat" maxlength="300"></div>' +
+      '</div>' +
       '<div style="border-top:1px dashed var(--border);margin:6px 0"></div><b>🛒 Order Detail</b>' + order +
+      '<div class="rgd-grp">📝 Catatan Khusus / Request</div><div id="rgdNotes">' + rgdNoteRow_() + '</div><button type="button" class="btn btn-outline btn-sm" onclick="rgdNoteAdd()">＋ Tambah Catatan</button>' +
       '<div class="rgd-sum" id="rgdSum"></div>' +
       '<label class="or-check" style="margin-top:10px"><input type="checkbox" id="rgd_save" checked> Simpan ke data Reservasi &amp; CRM (status Pertanyaan)</label>',
     onSubmit: rgdSubmit
   });
+  rgdNoteNum();
   const px = document.getElementById('rgd_pax'); if (px) px.addEventListener('input', function() { px.dataset.touched = 1; });
   rgdCalc(false);
+}
+function rgdNoteRow_() { return '<div class="rgd-note"><span class="n"></span><input class="form-control" maxlength="200" placeholder="mis. Mohon siapkan meja dekat panggung"><button type="button" class="btn btn-outline btn-sm" title="Hapus" onclick="rgdNoteDel(this)">×</button></div>'; }
+function rgdNoteNum() { document.querySelectorAll('#rgdNotes .rgd-note .n').forEach(function(e, i) { e.textContent = (i + 1) + '.'; }); }
+function rgdNoteAdd() {
+  const box = document.getElementById('rgdNotes');
+  if (box.querySelectorAll('.rgd-note').length >= 10) { toast('Maksimal 10 catatan.', 'error'); return; }
+  box.insertAdjacentHTML('beforeend', rgdNoteRow_()); rgdNoteNum();
+  const t = box.querySelectorAll('input'); t[t.length - 1].focus();
+}
+function rgdNoteDel(btn) {
+  const row = btn.closest('.rgd-note'), box = document.getElementById('rgdNotes');
+  if (box.querySelectorAll('.rgd-note').length <= 1) { row.querySelector('input').value = ''; return; }
+  row.remove(); rgdNoteNum();
 }
 function rgdQty(id) { const e = document.getElementById('rgq_' + id); const n = e ? Math.floor(Number(e.value)) : 0; return n > 0 ? Math.min(n, 9999) : 0; }
 function rgdStep(id, d) { const e = document.getElementById('rgq_' + id); if (e) { e.value = Math.max(0, Math.min(9999, rgdQty(id) + d)); rgdCalc(true); } }
@@ -8057,7 +8075,8 @@ function rgdCalc(fromUser) {
 }
 function rgdSubmit() {
   const g = function(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; };
-  const data = { nama: g('rgd_nama'), instansi: g('rgd_instansi'), whatsapp: g('rgd_wa'), tanggal_kunjungan: g('rgd_tgl'), jam_kedatangan: g('rgd_jam'), jumlah_peserta: g('rgd_pax'), catatan: g('rgd_cat') };
+  const data = { nama: g('rgd_nama'), instansi: g('rgd_instansi'), whatsapp: g('rgd_wa'), tanggal_kunjungan: g('rgd_tgl'), jam_kedatangan: g('rgd_jam'), jumlah_peserta: g('rgd_pax') };
+  data.catatan_list = Array.prototype.map.call(document.querySelectorAll('#rgdNotes input'), function(i) { return i.value.trim(); }).filter(String);
   data.items = App.rgd.items.map(function(i) { return { id: i.id, qty: rgdQty(i.id) }; }).filter(function(x) { return x.qty > 0; });
   const save = document.getElementById('rgd_save').checked;
   const miss = data.nama ? (!data.whatsapp ? 'Nomor HP/WA' : !data.tanggal_kunjungan ? 'Tanggal kunjungan' : !data.jam_kedatangan ? 'Jam kedatangan' : !data.jumlah_peserta ? 'Jumlah pengunjung' : '') : 'Nama pemesan';
@@ -8069,8 +8088,8 @@ function rgdSubmit() {
     const d = res.data;
     App.rgdText = d.wa_text; App.rgdPhone = d.wa_customer;
     openModal({
-      title: save ? '✅ Reservasi Tersimpan — ' + (d.nomor_reservasi || '') : '📄 Teks Formulir', wide: true, footer: null,
-      body: '<div class="form-hint" style="margin-bottom:6px">Total <b>' + rgRp_(d.total) + '</b> · DP <b>' + rgRp_(d.dp) + '</b>. Teks di bawah siap dikirim ke pelanggan (boleh diedit dulu).</div>' +
+      title: save ? '✅ Reservasi Tersimpan — ' + (d.nomor_reservasi || '') + (d.lead_id ? ' · ' + d.lead_id : '') : '📄 Teks Formulir', wide: true, footer: null,
+      body: '<div class="form-hint" style="margin-bottom:6px">' + (d.lead_id ? 'Lead <b>' + esc(d.lead_id) + '</b> ' + (d.lead_baru ? '(baru dibuat)' : '(lead yang sudah ada, diperbarui)') + ' · ' : '') + 'Total <b>' + rgRp_(d.total) + '</b> · DP <b>' + rgRp_(d.dp) + '</b>. Teks di bawah siap dikirim ke pelanggan (boleh diedit dulu).</div>' +
         '<textarea class="form-control" id="rgdText" rows="18" style="font-family:inherit;font-size:13px">' + esc(d.wa_text) + '</textarea>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:flex-end">' +
         '<button class="btn btn-outline" onclick="closeModal()">Tutup</button>' +
