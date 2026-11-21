@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="theme-color" content="#6d28d9">
 <link rel="icon" type="image/png" href="icons/favicon.png">
 <script src="config.js"></script>
@@ -134,6 +136,7 @@ textarea.form-control{resize:vertical;min-height:80px}
 'use strict';
 
 /* ---------- Helpers ---------- */
+function safeUrl_(u){ u=String(u==null?'':u).trim(); return /^https?:\/\//i.test(u)?u:''; }
 function esc(s){ if(s===null||s===undefined) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function toast(msg, type){ type=type||'success'; const r=document.getElementById('toastRoot'); const el=document.createElement('div'); el.className='toast '+(type==='error'?'error':''); el.textContent=msg; r.appendChild(el); setTimeout(function(){ el.remove(); },3600); }
 function qs(name){ const m = new RegExp('[?&]'+name+'=([^&]*)').exec(location.search); return m ? decodeURIComponent(m[1].replace(/\+/g,' ')) : ''; }
@@ -246,11 +249,11 @@ function socialHtml() {
   const soc = PAGE.social || [];
   if (soc.length) {
     h += '<div class="soc"><div class="soc-t">' + esc(PAGE.social_text || 'Ikuti kami') + '</div><div class="soc-row">' +
-      soc.map(function(x) { return '<a class="soc-btn soc-' + esc(x.key) + '" href="' + esc(x.url) + '" target="_blank" rel="noopener noreferrer">' + (SOC_ICON[x.key] || '🔗') + ' ' + esc(x.label) + '</a>'; }).join('') + '</div></div>';
+      soc.map(function(x) { return '<a class="soc-btn soc-' + esc(x.key) + '" href="' + esc(safeUrl_(x.url)||'#') + '" target="_blank" rel="noopener noreferrer">' + (SOC_ICON[x.key] || '🔗') + ' ' + esc(x.label) + '</a>'; }).join('') + '</div></div>';
   }
   if (PAGE.review && PAGE.review.url) {
     h += '<div class="soc"><div class="soc-t">' + esc(PAGE.review.text || '') + '</div><div class="soc-row">' +
-      '<a class="soc-btn soc-maps" href="' + esc(PAGE.review.url) + '" target="_blank" rel="noopener noreferrer">⭐ <b>Tulis Ulasan di Google Maps</b></a></div></div>';
+      '<a class="soc-btn soc-maps" href="' + esc(safeUrl_(PAGE.review.url)||'#') + '" target="_blank" rel="noopener noreferrer">⭐ <b>Tulis Ulasan di Google Maps</b></a></div></div>';
   }
   return h;
 }
@@ -427,7 +430,7 @@ function render() {
       '<div class="sub">' + (PAGE.campaign ? 'Campaign: ' + esc(PAGE.campaign) + ' · ' : '') + 'Data Anda aman dan hanya digunakan untuk keperluan informasi &amp; reservasi.</div>' +
       evHtml +
       '<div id="formErr" class="err hidden"></div>' +
-      '<form id="pubForm" onsubmit="return submitForm(event)">' + formHtml +
+      '<form id="pubForm" onsubmit="return submitForm(event)">' + '<div style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden" aria-hidden="true"><label>Website<input type="text" id="hp_website" name="website" tabindex="-1" autocomplete="off"></label></div>' + formHtml +
         '<button class="btn btn-primary" id="btnSubmit" type="submit">' + esc(ctaLabel()) + '</button>' +
       '</form>' +
       socialHtml() +
@@ -462,6 +465,7 @@ function submitForm(e) {
   const btn = document.getElementById('btnSubmit');
   const fields = pickFields();
   const data = { utm: UTM };
+  try { const hp = document.getElementById('hp_website'); if (hp) data.website = hp.value; } catch (e) {}
   LAST_DATA = data;
   let missing = '';
   fields.forEach(function(f) {

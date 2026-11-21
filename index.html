@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="manifest" href="manifest.webmanifest">
+<meta http-equiv="Content-Security-Policy" content="object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="theme-color" content="#6d28d9">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -613,6 +615,16 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+// Untuk nilai di dalam string JS pada atribut onclick='fn(\'...\')': browser mendekode &#39; kembali jadi ', jadi tanda kutip & backslash harus di-escape DULU
+function escJs(s) {
+  if (s === null || s === undefined) return '';
+  return esc(String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[\r\n\u2028\u2029]+/g, ' '));
+}
+// Hanya izinkan link http/https (blokir javascript:, data:, dll.)
+function safeUrl_(u) {
+  u = String(u === null || u === undefined ? '' : u).trim();
+  return /^https?:\/\//i.test(u) ? u : '';
+}
 function fmtIDR(n) {
   n = Number(n) || 0;
   return 'Rp ' + n.toLocaleString('id-ID');
@@ -683,6 +695,9 @@ function api(fnName) {
           forceLogout('Sesi berakhir. Silakan login kembali.');
           reject(res);
           return;
+        }
+        if (res && res.code === 'PASSWORD_CHANGE_REQUIRED' && typeof openChangePassword === 'function') {
+          try { openChangePassword(true); } catch (e) { /* abaikan */ }
         }
         reject(res || { success: false, message: 'Terjadi kesalahan.' });
       })
@@ -3262,8 +3277,8 @@ function renderCrmWidgets() {
       body += '<tr' + (past ? ' style="opacity:.55"' : '') + '><td style="white-space:nowrap"><b>' + x.b.d + ' ' + CRM_MONTHS[x.b.m - 1].substring(0, 3) + '</b>' + tag + '</td>' +
         '<td>' + esc(r.nama || '—') + '</td><td>' + (x.b.y ? 'ke-' + (curY - x.b.y) : '—') + '</td><td>' + esc(r.whatsapp || '—') + '</td>' +
         '<td>' + (r.status ? '<span class="badge ' + c360badge(r.status) + '">' + esc(r.status) + '</span>' : '—') + '</td><td>' + esc(r.PIC || '—') + '</td>' +
-        '<td style="white-space:nowrap"><button class="btn btn-outline btn-sm btn-icon" title="Kirim ucapan via WhatsApp" onclick="crmBdayWa(\'' + esc(r.customer_id) + '\')">💬</button> ' +
-        '<button class="btn btn-outline btn-sm btn-icon" title="Customer 360" onclick="openCustomer360(\'' + esc(r.customer_id) + '\')">👁</button></td></tr>';
+        '<td style="white-space:nowrap"><button class="btn btn-outline btn-sm btn-icon" title="Kirim ucapan via WhatsApp" onclick="crmBdayWa(\'' + escJs(r.customer_id) + '\')">💬</button> ' +
+        '<button class="btn btn-outline btn-sm btn-icon" title="Customer 360" onclick="openCustomer360(\'' + escJs(r.customer_id) + '\')">👁</button></td></tr>';
     });
     body += '</tbody></table></div>';
     if (list.length > LIMIT) body += '<div style="margin-top:8px"><button class="btn btn-outline btn-sm" onclick="App.crmBdayAll=!App.crmBdayAll;renderCrmWidgets()">' +
@@ -3336,7 +3351,7 @@ function renderLeadWidgets() {
     table = '<div class="grid-table-wrap"><table class="table-plain"><thead><tr><th>Sumber</th><th style="min-width:160px">Jumlah Lead</th><th style="text-align:right">Aktif</th><th style="text-align:right">Follow Up</th><th style="text-align:right">Reserved</th><th style="text-align:right">Lost</th><th style="text-align:right">Konversi</th><th style="text-align:right">Nilai Potensi</th></tr></thead><tbody>';
     rows.forEach(function(r) {
       const conv = r.n ? Math.round(r.res / r.n * 1000) / 10 : 0;
-      table += '<tr style="cursor:pointer" title="Klik untuk menyaring tabel di bawah" onclick="leadFilterSumber(\'' + esc(r.k === '(Tanpa sumber)' ? '' : r.k).replace(/'/g, '&#39;') + '\')"><td><b>' + esc(r.k) + '</b></td>' +
+      table += '<tr style="cursor:pointer" title="Klik untuk menyaring tabel di bawah" onclick="leadFilterSumber(\'' + escJs(r.k === '(Tanpa sumber)' ? '' : r.k).replace(/'/g, '&#39;') + '\')"><td><b>' + esc(r.k) + '</b></td>' +
         '<td><div style="display:flex;align-items:center;gap:8px"><b style="min-width:28px">' + fmtNum(r.n) + '</b><div class="progress" style="flex:1"><span style="width:' + Math.max(4, Math.round(r.n / max * 100)) + '%"></span></div><small>' + (total ? Math.round(r.n / total * 100) : 0) + '%</small></div></td>' +
         '<td style="text-align:right">' + fmtNum(r.aktif) + '</td><td style="text-align:right">' + fmtNum(r.fu) + '</td><td style="text-align:right">' + fmtNum(r.res) + '</td><td style="text-align:right">' + fmtNum(r.lost) + '</td>' +
         '<td style="text-align:right"><span class="badge ' + (conv >= 20 ? 'b-green' : conv > 0 ? 'b-amber' : 'b-gray') + '">' + conv + '%</span></td><td style="text-align:right">' + esc(fmtIDR(r.pot)) + '</td></tr>';
@@ -3380,7 +3395,7 @@ function leadTodayWidget_(all) {
       const need = String(r.kebutuhan || '').replace(/\s+/g, ' ').trim();
       const sumber = String(r.sumber || '').trim() || 'Tanpa sumber';
       const t = T(r);
-      list += '<div class="lt-row" style="display:flex;align-items:center;gap:10px;padding:9px 6px;border-bottom:1px solid var(--border,#e5e7eb);cursor:pointer" title="Klik untuk membuka di daftar leads" onclick="leadTodayOpen(\'' + esc(String(r.lead_id || '')).replace(/'/g, '&#39;') + '\')">' +
+      list += '<div class="lt-row" style="display:flex;align-items:center;gap:10px;padding:9px 6px;border-bottom:1px solid var(--border,#e5e7eb);cursor:pointer" title="Klik untuk membuka di daftar leads" onclick="leadTodayOpen(\'' + escJs(String(r.lead_id || '')).replace(/'/g, '&#39;') + '\')">' +
         '<div style="flex:1;min-width:0">' +
           '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><b>' + esc(r.nama || '—') + '</b>' +
             '<span class="badge b-blue">' + esc(sumber) + '</span>' +
@@ -3388,7 +3403,7 @@ function leadTodayWidget_(all) {
             (jam ? '<small style="color:#6b7280">' + esc(jam) + '</small>' : '') + '</div>' +
           '<div style="font-size:12px;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(ph || 'Tanpa nomor') + (need ? ' · ' + esc(need.length > 70 ? need.substring(0, 70) + '…' : need) : '') + '</div>' +
         '</div>' +
-        (ph ? '<button class="btn btn-outline btn-sm" style="flex:none" title="Buka chat WhatsApp" onclick="event.stopPropagation();leadTodayWa(\'' + esc(String(r.lead_id || '')).replace(/'/g, '&#39;') + '\')">💬 WA</button>' : '') +
+        (ph ? '<button class="btn btn-outline btn-sm" style="flex:none" title="Buka chat WhatsApp" onclick="event.stopPropagation();leadTodayWa(\'' + escJs(String(r.lead_id || '')).replace(/'/g, '&#39;') + '\')">💬 WA</button>' : '') +
       '</div>';
     });
     list += '</div>';
@@ -3493,12 +3508,12 @@ function renderFollowupWidgets() {
     list = '<div style="max-height:340px;overflow:auto">';
     rows.slice(0, MAX).forEach(function(r) {
       const d = fuDaysLate_(r);
-      list += '<div style="display:flex;align-items:center;gap:10px;padding:9px 6px;border-bottom:1px solid var(--border,#e5e7eb);cursor:pointer" title="Klik untuk membuka di daftar follow up" onclick="fuDueOpen(\'' + esc(String(r.followup_id || '')).replace(/'/g, '&#39;') + '\')">' +
+      list += '<div style="display:flex;align-items:center;gap:10px;padding:9px 6px;border-bottom:1px solid var(--border,#e5e7eb);cursor:pointer" title="Klik untuk membuka di daftar follow up" onclick="fuDueOpen(\'' + escJs(String(r.followup_id || '')).replace(/'/g, '&#39;') + '\')">' +
         '<div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><b>' + esc(fuLabel_(r)) + '</b>' +
         '<span class="badge ' + (d === 0 ? 'b-amber' : 'b-red') + '">' + (d === 0 ? 'Hari ini' : 'Terlambat ' + d + ' hari') + '</span>' +
         (r.jenis ? '<span class="badge b-blue">' + esc(r.jenis) + '</span>' : '') + '</div>' +
         '<div style="font-size:12px;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(String(r.tanggal).substring(0, 10)) + (r.PIC ? ' · PIC ' + esc(r.PIC) : '') + (r.tindak_lanjut ? ' · ' + esc(String(r.tindak_lanjut).substring(0, 60)) : '') + '</div></div>' +
-        '<button class="btn btn-outline btn-sm" style="flex:none" title="Buka chat WhatsApp" onclick="event.stopPropagation();fuDueWa(\'' + esc(String(r.followup_id || '')).replace(/'/g, '&#39;') + '\')">💬 WA</button></div>';
+        '<button class="btn btn-outline btn-sm" style="flex:none" title="Buka chat WhatsApp" onclick="event.stopPropagation();fuDueWa(\'' + escJs(String(r.followup_id || '')).replace(/'/g, '&#39;') + '\')">💬 WA</button></div>';
     });
     list += '</div>';
     if (rows.length > MAX) list += '<div style="padding:8px 6px;font-size:12px;color:#6b7280">+ ' + fmtNum(rows.length - MAX) + ' follow up lainnya. Klik "Lihat semua jatuh tempo".</div>';
@@ -4338,8 +4353,8 @@ function orDrawJadwal() {
       h += '<tr><td>' + orFmtDT(r.status === 'TERKIRIM' ? (r.dikirim_ms || r.kirim_ms) : r.kirim_ms) + '</td><td>' + esc(r.nama) + '<div class="or-sub">' + esc(r.crm_id) + '</div></td><td>' + esc(r.whatsapp) + '</td><td>' + esc(r.PIC) + '</td>' +
         '<td style="max-width:260px"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px" title="' + esc(r.pesan) + '">' + (r.has_image ? '🖼 ' : '') + esc(r.pesan) + '</div></td>' +
         '<td><span class="badge ' + orQBadge(r.status) + '">' + esc(r.status) + '</span>' + (r.error ? '<div class="or-sub" style="color:var(--danger)">' + esc(r.error) + '</div>' : '') + '</td>' +
-        '<td>' + (r.status === 'MENUNGGU' ? '<button class="btn btn-outline btn-sm" onclick="orQAct(\'cancel\',\'' + esc(r.queue_id) + '\')">Batalkan</button>' :
-          (r.status === 'GAGAL' || r.status === 'DIBATALKAN') ? '<button class="btn btn-outline btn-sm" onclick="orQAct(\'retry\',\'' + esc(r.queue_id) + '\')">Jadwalkan ulang</button>' : '') + '</td></tr>';
+        '<td>' + (r.status === 'MENUNGGU' ? '<button class="btn btn-outline btn-sm" onclick="orQAct(\'cancel\',\'' + escJs(r.queue_id) + '\')">Batalkan</button>' :
+          (r.status === 'GAGAL' || r.status === 'DIBATALKAN') ? '<button class="btn btn-outline btn-sm" onclick="orQAct(\'retry\',\'' + escJs(r.queue_id) + '\')">Jadwalkan ulang</button>' : '') + '</td></tr>';
     });
     h += '</tbody></table></div></div>' + (d.truncated ? '<div class="form-hint">Menampilkan 500 pesan terbaru.</div>' : '');
   }
@@ -7264,8 +7279,8 @@ function orQueueRender() {
       (gu ? orImgTag(gu, 'width:72px;height:72px;object-fit:cover;border-radius:8px;flex:none') : '') +
       '<div>🖼 Materi bergambar: WhatsApp Web hanya menerima teks otomatis. ' + (isRef
         ? 'Klik <b>📋 Salin gambar</b>, buka chat, tempel dengan <b>Ctrl+V</b> di kolom chat, lalu tempel/ketik caption dan kirim. Atau gunakan <b>⏰ Jadwalkan Kirim Otomatis</b> agar gambar terkirim otomatis.' +
-          '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button class="btn btn-outline btn-sm" onclick="orCopyImage(\'' + esc(gu) + '\')">📋 Salin gambar</button><button class="btn btn-outline btn-sm" onclick="orDownloadImage(\'' + esc(gu) + '\')">⬇ Unduh</button></div>'
-        : '<b>lampirkan gambar secara manual</b> (tombol 📎). Teks di bawah menjadi caption-nya.' + (gu ? ' <a href="' + esc(gu) + '" target="_blank" rel="noopener">Buka gambar ↗</a>' : '') +
+          '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button class="btn btn-outline btn-sm" onclick="orCopyImage(\'' + escJs(gu) + '\')">📋 Salin gambar</button><button class="btn btn-outline btn-sm" onclick="orDownloadImage(\'' + escJs(gu) + '\')">⬇ Unduh</button></div>'
+        : '<b>lampirkan gambar secara manual</b> (tombol 📎). Teks di bawah menjadi caption-nya.' + (gu ? ' <a href="' + esc(safeUrl_(gu) || '#') + '" target="_blank" rel="noopener">Buka gambar ↗</a>' : '') +
           (gu ? '<label class="or-check" style="margin-top:6px"><input type="checkbox" onchange="orQueueToggleLink(this.checked)"' + (q.includeLink ? ' checked' : '') + '> Sertakan link gambar di dalam pesan</label>' : '')) +
       '</div></div>';
   }
@@ -7308,7 +7323,7 @@ function orQueueOpenWA() {
   const msg = ta ? ta.value : orQueueDefaultMsg(c);
   q.msgs[id] = msg;
   // Dibuka langsung saat klik (agar tidak diblokir pop-up blocker). Pesan TIDAK dikirim otomatis.
-  const w = window.open(orWaUrl(c.whatsapp, msg), '_blank');
+  const w = window.open(orWaUrl(c.whatsapp, msg), '_blank', 'noopener');
   if (!w) { toast('Pop-up diblokir browser. Izinkan pop-up untuk situs ini lalu klik lagi.', 'error'); return; }
   if (q.logged[id]) return; // sudah tercatat: hanya membuka kembali chat
   q.busy = true; q.error = '';
@@ -7383,7 +7398,7 @@ function orRenderLogTable() {
         '<button class="btn btn-outline btn-icon btn-sm" title="Update status &amp; hasil" onclick="orOpenUpdate(\'' + id + '\')">✏️</button>' +
         (canLead ? '<button class="btn btn-primary btn-icon btn-sm" title="Jadikan Lead" onclick="orOpenUpdate(\'' + id + '\', true)">🧲</button>' : '') +
         '<button class="btn btn-outline btn-icon btn-sm" title="Buka chat WhatsApp" onclick="orOpenChat(\'' + id + '\')">💬</button>' +
-        '<button class="btn btn-outline btn-icon btn-sm" title="Customer 360" onclick="openCustomer360(\'' + esc(l.crm_id) + '\')">👁</button>' +
+        '<button class="btn btn-outline btn-icon btn-sm" title="Customer 360" onclick="openCustomer360(\'' + escJs(l.crm_id) + '\')">👁</button>' +
         (l.lead_id ? '' : '<button class="btn btn-outline btn-icon btn-sm" title="Hapus log" onclick="orDeleteLog(\'' + id + '\')">🗑</button>') +
       '</div></td></tr>';
   });
@@ -7395,7 +7410,7 @@ function orFindLog(id) {
 function orOpenChat(id) {
   const l = orFindLog(id);
   if (!l) return;
-  const w = window.open(orWaUrl(l.whatsapp, ''), '_blank');
+  const w = window.open(orWaUrl(l.whatsapp, ''), '_blank', 'noopener');
   if (!w) toast('Pop-up diblokir browser. Izinkan pop-up untuk situs ini.', 'error');
 }
 function orDeleteLog(id) {
@@ -7523,8 +7538,8 @@ function openParticipantCard(row) {
         '<div style="margin-top:10px;font-size:17px;font-weight:800;letter-spacing:1px">' + esc(regId) + '</div>' +
         '<div style="font-size:12px;color:var(--muted);margin-top:4px">Scan QR ini untuk check-in · Event: ' + esc(row.event_nama || row.event_id || '-') + '</div>' +
         '<div style="display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap">' +
-          '<button class="btn btn-outline btn-sm" onclick="copyText_(\'' + esc(regId) + '\', \'Registration ID disalin.\')">📋 Salin ID</button>' +
-          '<a class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="' + esc(qrUrl) + '">🔳 Unduh QR</a>' +
+          '<button class="btn btn-outline btn-sm" onclick="copyText_(\'' + escJs(regId) + '\', \'Registration ID disalin.\')">📋 Salin ID</button>' +
+          '<a class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="' + esc(safeUrl_(qrUrl) || '#') + '">🔳 Unduh QR</a>' +
           (String(row.status_kehadiran) !== 'HADIR' ? '<button class="btn btn-success btn-sm" id="btnCheckinNow">✔ Check-in Sekarang</button>' : '') +
         '</div>' +
       '</div>',
@@ -8017,9 +8032,9 @@ function rgdOpen_(d) {
     if (!list.length) return;
     order += '<div class="rgd-grp">' + esc(g.icon + ' ' + g.label) + '</div>' + list.map(function(i) {
       return '<div class="rgd-row" id="rgr_' + esc(i.id) + '"><div><b>' + esc(i.nama) + '</b><small>' + rgRp_(i.harga) + '</small></div>' +
-        '<div class="rgd-step"><button type="button" onclick="rgdStep(\'' + esc(i.id) + '\',-1)">−</button>' +
+        '<div class="rgd-step"><button type="button" onclick="rgdStep(\'' + escJs(i.id) + '\',-1)">−</button>' +
         '<input type="number" min="0" max="9999" value="0" id="rgq_' + esc(i.id) + '" oninput="rgdCalc(true)">' +
-        '<button type="button" onclick="rgdStep(\'' + esc(i.id) + '\',1)">+</button></div></div>';
+        '<button type="button" onclick="rgdStep(\'' + escJs(i.id) + '\',1)">+</button></div></div>';
     }).join('');
   });
   if (!items.length) order = '<div class="form-hint">Belum ada item aktif. Tambahkan di Landing Pages → Form Reservasi Generator.</div>';
@@ -8172,7 +8187,7 @@ function lpShowGuide() {
       '<li>Di Apps Script pastikan <b>Deploy → Versi baru</b> sudah dilakukan (akses Web App: <i>Siapa saja</i>). Isi kolom Alamat Publik di halaman ini dengan <code>https://promo.namadomainanda.com</code>.</li>' +
       '<li><b>Uji</b>: buka link salah satu landing page, kirim 1 data uji, lalu cek masuk di Leads / Reservasi / Peserta.</li>' +
     '</ol>' +
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0 4px"><b>Link Web App (untuk API_URL)</b><button class="btn btn-outline btn-sm" onclick="copyText_(\'' + esc(exec) + '\',\'Link disalin.\')">📋 Salin Link</button></div>' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0 4px"><b>Link Web App (untuk API_URL)</b><button class="btn btn-outline btn-sm" onclick="copyText_(\'' + escJs(exec) + '\',\'Link disalin.\')">📋 Salin Link</button></div>' +
     '<pre class="lb-code">' + esc(exec) + '</pre>' +
     '<div class="lb-foot"><button class="btn btn-primary" onclick="closeModal()">Tutup</button></div>'
   });
@@ -8301,8 +8316,8 @@ function lfRenderResults() {
       '<td>' + esc(r.kategori) + '</td><td style="max-width:260px">' + esc(r.alamat) + '</td>' +
       '<td>' + (r.telepon ? esc(r.telepon) + (r.whatsapp ? ' <span class="badge b-green">HP/WA</span>' : ' <span class="badge b-gray">Telepon</span>') : '<span style="color:#c3c6cf">—</span>') +
         (r.exists === 'TERSIMPAN' ? '<div><span class="badge b-blue">Sudah tersimpan</span></div>' : r.exists === 'SUDAH_CRM' ? '<div><span class="badge b-amber">Sudah di CRM</span></div>' : '') + '</td>' +
-      '<td>' + (r.rating ? '⭐ ' + r.rating + ' <span class="or-sub">(' + r.ulasan + ')</span>' : '—') + '</td>' +
-      '<td>' + (r.maps_url ? '<a href="' + esc(r.maps_url) + '" target="_blank" rel="noopener noreferrer">' + (String(r.maps_url).indexOf('openstreetmap.org') > 0 ? 'OSM' : 'Maps') + ' ↗</a>' : '') + '</td></tr>';
+      '<td>' + (r.rating ? '⭐ ' + esc(r.rating) + ' <span class="or-sub">(' + esc(r.ulasan) + ')</span>' : '—') + '</td>' +
+      '<td>' + (safeUrl_(r.maps_url) ? '<a href="' + esc(safeUrl_(r.maps_url)) + '" target="_blank" rel="noopener noreferrer">' + (String(r.maps_url).indexOf('openstreetmap.org') > 0 ? 'OSM' : 'Maps') + ' ↗</a>' : '') + '</td></tr>';
   });
   host.innerHTML = h + '</tbody></table>';
   const more = Object.keys(LF.tokens).some(function(k) { return LF.tokens[k]; });
@@ -8361,9 +8376,9 @@ function lfRenderSavedTable() {
   const all = rows.every(function(r) { return LF.ssel[r.finder_id]; });
   let h = '<table class="grid-table"><thead><tr><th class="col-check"><input type="checkbox" onchange="lfSToggleAll(this.checked)"' + (all ? ' checked' : '') + '></th><th>Nama</th><th>Kota</th><th>Kategori</th><th>Telepon</th><th>Status</th><th></th></tr></thead><tbody>';
   rows.slice(0, 300).forEach(function(r) {
-    h += '<tr><td class="col-check"><input type="checkbox" ' + (LF.ssel[r.finder_id] ? 'checked ' : '') + 'onchange="lfSToggle(\'' + esc(r.finder_id) + '\',this.checked)"></td><td><b>' + esc(r.nama) + '</b><div class="or-sub">' + esc(r.alamat) + '</div></td><td>' + esc(r.kota) + '</td><td>' + esc(r.kategori) + '</td>' +
+    h += '<tr><td class="col-check"><input type="checkbox" ' + (LF.ssel[r.finder_id] ? 'checked ' : '') + 'onchange="lfSToggle(\'' + escJs(r.finder_id) + '\',this.checked)"></td><td><b>' + esc(r.nama) + '</b><div class="or-sub">' + esc(r.alamat) + '</div></td><td>' + esc(r.kota) + '</td><td>' + esc(r.kategori) + '</td>' +
       '<td>' + esc(r.telepon || '—') + (r.whatsapp ? ' <span class="badge b-green">HP/WA</span>' : '') + '</td><td><span class="badge ' + (r.status === 'DIJADIKAN LEAD' ? 'b-green' : r.status === 'SUDAH ADA' ? 'b-amber' : 'b-blue') + '">' + esc(r.status) + '</span>' + (r.lead_id ? '<div class="or-sub">' + esc(r.lead_id) + '</div>' : '') + '</td>' +
-      '<td>' + (r.maps_url ? '<a href="' + esc(r.maps_url) + '" target="_blank" rel="noopener noreferrer">' + (String(r.maps_url).indexOf('openstreetmap.org') > 0 ? 'OSM' : 'Maps') + ' ↗</a>' : '') + '</td></tr>';
+      '<td>' + (safeUrl_(r.maps_url) ? '<a href="' + esc(safeUrl_(r.maps_url)) + '" target="_blank" rel="noopener noreferrer">' + (String(r.maps_url).indexOf('openstreetmap.org') > 0 ? 'OSM' : 'Maps') + ' ↗</a>' : '') + '</td></tr>';
   });
   host.innerHTML = h + '</tbody></table>' + (rows.length > 300 ? '<div class="form-hint" style="padding:8px">Menampilkan 300 pertama; gunakan pencarian untuk mempersempit.</div>' : '');
 }
