@@ -3902,6 +3902,9 @@ async function renderModulePage(moduleKey) {
         icon: '✔️', title: 'Check-in (hadir)',
         show: function(row) { return String(row.status_kehadiran) !== 'HADIR'; },
         onClick: function(row) { participantCheckin(row); }
+      }] : moduleKey === 'reservations' ? [{
+        icon: '📄', title: 'Lihat Form Reservasi (salin / kirim ulang ke pelanggan)',
+        onClick: function(row) { rgView(row); }
       }] : null),
       toolbarButtons: moduleKey === 'participants' ? [{
         cls: 'btn-primary', title: 'Masukkan peserta ke CRM (yang dipilih, atau semua yang belum masuk CRM)',
@@ -8116,6 +8119,27 @@ function rgdSubmit() {
 function rgdSendWa() {
   const t = document.getElementById('rgdText');
   window.open(orWaUrl(App.rgdPhone, t ? t.value : App.rgdText), '_blank', 'noopener');
+}
+// Lihat ulang formulir reservasi yang sudah masuk (dari form pelanggan maupun generator admin) untuk disalin / dikirim ulang
+function rgView(row) {
+  showLoading('Menyusun formulir...');
+  api('apiResvGenView', App.token, row.reservation_id).then(function(res) {
+    hideLoading();
+    const d = res.data || {};
+    App.rgdText = d.wa_text || ''; App.rgdPhone = d.wa_customer || '';
+    const info = d.mode === 'tersimpan' ? 'Formulir sesuai data saat reservasi disimpan.'
+      : d.mode === 'catatan' ? 'Reservasi lama: formulir disusun ulang dari catatan reservasi. Periksa kembali sebelum dikirim.'
+      : 'Reservasi ini diinput manual (bukan generator), jadi yang tampil berupa ringkasan.';
+    openModal({
+      title: '📄 Form Reservasi — ' + (row.nomor_reservasi || row.reservation_id) + (d.nama ? ' · ' + d.nama : ''), wide: true, footer: null,
+      body: '<div class="form-hint" style="margin-bottom:6px">' + esc(info) + ' Teks bisa diedit sebelum disalin.</div>' +
+        '<textarea class="form-control" id="rgdText" rows="18" style="font-family:inherit;font-size:13px">' + esc(d.wa_text || '') + '</textarea>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:flex-end">' +
+        '<button class="btn btn-outline" onclick="closeModal()">Tutup</button>' +
+        '<button class="btn btn-primary" onclick="copyText_(document.getElementById(\'rgdText\').value, \'Teks formulir disalin.\')">📋 Salin Teks</button>' +
+        (d.wa_customer ? '<button class="btn btn-outline" onclick="rgdSendWa()">📲 Kirim ke WhatsApp Pelanggan</button>' : '') + '</div>'
+    });
+  }).catch(function(err) { hideLoading(); toast((err && err.message) || 'Gagal menampilkan formulir.', 'error'); });
 }
 function renderBrandSettings_(b) {
   return '<div class="card card-pad" style="margin-bottom:16px"><div class="card-title"><span class="dot"></span>Tampilan Halaman Publik (nama, logo &amp; banner bawaan)</div>' +
